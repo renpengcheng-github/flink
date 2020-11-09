@@ -22,7 +22,6 @@ import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -31,6 +30,7 @@ import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 import org.apache.flink.streaming.api.functions.co.KeyedBroadcastProcessFunction;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 import org.apache.flink.streaming.api.watermark.Watermark;
+import org.apache.flink.test.util.AbstractTestBase;
 import org.apache.flink.util.Collector;
 
 import org.junit.Test;
@@ -45,7 +45,7 @@ import static org.junit.Assert.assertEquals;
 /**
  * ITCase for the {@link org.apache.flink.api.common.state.BroadcastState}.
  */
-public class BroadcastStateITCase {
+public class BroadcastStateITCase extends AbstractTestBase {
 
 	@Test
 	public void testKeyedWithBroadcastTranslation() throws Exception {
@@ -63,7 +63,6 @@ public class BroadcastStateITCase {
 		expected.put(5L, "test:5");
 
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 		final DataStream<Long> srcOne = env.generateSequence(0L, 5L)
 				.assignTimestampsAndWatermarks(new CustomWmEmitter<Long>() {
@@ -115,7 +114,6 @@ public class BroadcastStateITCase {
 		expected.put(5L, "test:5");
 
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 		final DataStream<Long> srcOne = env.generateSequence(0L, 5L)
 			.assignTimestampsAndWatermarks(new CustomWmEmitter<Long>() {

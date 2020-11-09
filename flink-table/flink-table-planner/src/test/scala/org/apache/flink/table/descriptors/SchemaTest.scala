@@ -31,7 +31,7 @@ class SchemaTest extends DescriptorTestBase {
   def testInvalidType(): Unit = {
     addPropertyAndVerify(
       descriptors().get(0),
-      "schema.1.type", "dfghj")
+      "schema.1.data-type", "dfghj")
   }
 
   @Test(expected = classOf[ValidationException])
@@ -44,14 +44,14 @@ class SchemaTest extends DescriptorTestBase {
   // ----------------------------------------------------------------------------------------------
 
   override def descriptors(): util.List[Descriptor] = {
-    val desc1 = Schema()
+    val desc1 = new Schema()
       .field("myField", Types.BOOLEAN)
       .field("otherField", "VARCHAR").from("csvField")
       .field("p", Types.SQL_TIMESTAMP).proctime()
       .field("r", Types.SQL_TIMESTAMP).rowtime(
-        Rowtime().timestampsFromSource().watermarksFromSource())
+      new Rowtime().timestampsFromSource().watermarksFromSource())
 
-    val desc2 = Schema()
+    val desc2 = new Schema()
       .field("myField", Types.BOOLEAN)
       .field("otherField", "VARCHAR").from("csvField")
       .field("p", Types.SQL_TIMESTAMP).proctime()
@@ -61,39 +61,36 @@ class SchemaTest extends DescriptorTestBase {
   }
 
   override def validator(): DescriptorValidator = {
-    new SchemaValidator(
-      isStreamEnvironment = true,
-      supportsSourceTimestamps = true,
-      supportsSourceWatermarks = true)
+    new SchemaValidator(true, true, true)
   }
 
   override def properties(): util.List[util.Map[String, String]] = {
     val props1 = Map(
       "schema.0.name" -> "myField",
-      "schema.0.type" -> "BOOLEAN",
+      "schema.0.data-type" -> "BOOLEAN",
       "schema.1.name" -> "otherField",
-      "schema.1.type" -> "VARCHAR",
+      "schema.1.data-type" -> "VARCHAR",
       "schema.1.from" -> "csvField",
       "schema.2.name" -> "p",
-      "schema.2.type" -> "TIMESTAMP",
+      "schema.2.data-type" -> "TIMESTAMP(3)",
       "schema.2.proctime" -> "true",
       "schema.3.name" -> "r",
-      "schema.3.type" -> "TIMESTAMP",
+      "schema.3.data-type" -> "TIMESTAMP(3)",
       "schema.3.rowtime.watermarks.type" -> "from-source",
       "schema.3.rowtime.timestamps.type" -> "from-source"
     )
 
     val props2 = Map(
       "schema.0.name" -> "myField",
-      "schema.0.type" -> "BOOLEAN",
+      "schema.0.data-type" -> "BOOLEAN",
       "schema.1.name" -> "otherField",
-      "schema.1.type" -> "VARCHAR",
+      "schema.1.data-type" -> "VARCHAR",
       "schema.1.from" -> "csvField",
       "schema.2.name" -> "p",
-      "schema.2.type" -> "TIMESTAMP",
+      "schema.2.data-type" -> "TIMESTAMP(3)",
       "schema.2.proctime" -> "true",
       "schema.3.name" -> "r",
-      "schema.3.type" -> "TIMESTAMP"
+      "schema.3.data-type" -> "TIMESTAMP(3)"
     )
 
     util.Arrays.asList(props1.asJava, props2.asJava)

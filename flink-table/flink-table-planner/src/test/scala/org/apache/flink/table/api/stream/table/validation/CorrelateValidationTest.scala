@@ -19,8 +19,9 @@ package org.apache.flink.table.api.stream.table.validation
 
 import org.apache.flink.api.scala._
 import org.apache.flink.table.api._
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api.bridge.scala._
 import org.apache.flink.table.expressions.utils._
+import org.apache.flink.table.runtime.utils.JavaUserDefinedAggFunctions.WeightedAvg
 import org.apache.flink.table.utils.{ObjectTableFunction, TableFunc1, TableFunc2, TableTestBase}
 import org.junit.Assert.{assertTrue, fail}
 import org.junit.Test
@@ -59,7 +60,7 @@ class CorrelateValidationTest extends TableTestBase {
     //============ throw exception when table function is not registered =========
     // Java Table API call
     expectExceptionThrown(
-      t.joinLateral("nonexist(a)"), "Undefined function: NONEXIST")
+      t.joinLateral(call("nonexist", $"a")), "Undefined function: nonexist")
     // SQL API call
     expectExceptionThrown(
       util.tableEnv.sqlQuery("SELECT * FROM MyTable, LATERAL TABLE(nonexist(a))"),
@@ -69,11 +70,6 @@ class CorrelateValidationTest extends TableTestBase {
     //========= throw exception when the called function is a scalar function ====
     util.tableEnv.registerFunction("func0", Func0)
 
-    // Java Table API call
-    expectExceptionThrown(
-      t.joinLateral("func0(a)"),
-      "only accepts a string expression which defines a table function call",
-      classOf[TableException])
     // SQL API call
     // NOTE: it doesn't throw an exception but an AssertionError, maybe a Calcite bug
     expectExceptionThrown(
@@ -85,8 +81,8 @@ class CorrelateValidationTest extends TableTestBase {
     // Java Table API call
     util.addFunction("func2", new TableFunc2)
     expectExceptionThrown(
-      t.joinLateral("func2(c, c)"),
-      "Given parameters of function 'FUNC2' do not match any signature")
+      t.joinLateral(call("func2", $"c", $"c")),
+      "Given parameters of function 'func2' do not match any signature")
     // SQL API call
     expectExceptionThrown(
       util.tableEnv.sqlQuery("SELECT * FROM MyTable, LATERAL TABLE(func2(c, c))"),
@@ -108,6 +104,52 @@ class CorrelateValidationTest extends TableTestBase {
       .select('c, 's).where('a > 10)
 
     util.verifyTable(result, "")
+  }
+
+  @Test(expected = classOf[ValidationException])
+  def testInvalidMapFunctionTypeAggregation(): Unit = {
+    val util = streamTestUtil()
+    util.addTable[(Int)](
+      "MyTable", 'int)
+      .flatMap('int.sum) // do not support AggregateFunction as input
+  }
+
+  @Test(expected = classOf[ValidationException])
+  def testInvalidMapFunctionTypeUDAGG(): Unit = {
+    val util = streamTestUtil()
+
+    val weightedAvg = new WeightedAvg
+    util.addTable[(Int)](
+      "MyTable", 'int)
+      .flatMap(weightedAvg('int, 'int)) // do not support AggregateFunction as input
+  }
+
+  @Test(expected = classOf[ValidationException])
+  def testInvalidMapFunctionTypeUDAGG2(): Unit = {
+    val util = streamTestUtil()
+
+    util.tableEnv.registerFunction("weightedAvg", new WeightedAvg)
+    util.addTable[(Int)](
+      "MyTable", 'int)
+      .flatMap(call("weightedAvg", $"int", $"int")) // do not support AggregateFunction as input
+  }
+
+  @Test(expected = classOf[ValidationException])
+  def testInvalidMapFunctionTypeScalarFunction(): Unit = {
+    val util = streamTestUtil()
+
+    util.addTable[(String)](
+      "MyTable", 'string)
+      .flatMap(Func15('string)) // do not support ScalarFunction as input
+  }
+
+  @Test(expected = classOf[ValidationException])
+  def testInvalidFlatMapFunctionTypeFieldReference(): Unit = {
+    val util = batchTestUtil()
+
+    util.addTable[(String)](
+      "MyTable", 'string)
+      .flatMap('string) // Only TableFunction can be used in flatMap
   }
 
   // ----------------------------------------------------------------------------------------------

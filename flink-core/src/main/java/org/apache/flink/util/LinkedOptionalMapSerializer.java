@@ -81,7 +81,7 @@ public final class LinkedOptionalMapSerializer {
 		BiFunctionWithException<DataInputView, String, V, IOException> valueReader) throws IOException {
 
 		final long header = in.readLong();
-		checkState(header == HEADER, "Corrupted stream received header %d", header);
+		checkState(header == HEADER, "Corrupted stream received header %s", header);
 
 		long mapSize = in.readInt();
 		LinkedOptionalMap<K, V> map = new LinkedOptionalMap<>();
@@ -113,9 +113,10 @@ public final class LinkedOptionalMapSerializer {
 		DataOutputSerializer frame = new DataOutputSerializer(64);
 		writer.accept(frame, item);
 
-		final byte[] buffer = frame.getCopyOfBuffer();
-		out.writeInt(buffer.length);
-		out.write(buffer);
+		final byte[] buffer = frame.getSharedBuffer();
+		final int bufferSize = frame.length();
+		out.writeInt(bufferSize);
+		out.write(buffer, 0, bufferSize);
 	}
 
 	@Nullable

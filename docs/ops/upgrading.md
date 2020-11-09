@@ -1,7 +1,7 @@
 ---
 title: "Upgrading Applications and Flink Versions"
 nav-parent_id: ops
-nav-pos: 15
+nav-pos: 13
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -90,7 +90,6 @@ Operator state can be either user-defined or internal.
 | Operator                                            | Data Type of Internal Operator State |
 |:----------------------------------------------------|:-------------------------------------|
 | ReduceFunction[IOT]                                 | IOT (Input and output type) [, KEY]  |
-| FoldFunction[IT, OT]                                | OT (Output type) [, KEY]             |
 | WindowFunction[IT, OT, KEY, WINDOW]                 | IT (Input type), KEY                 |
 | AllWindowFunction[IT, OT, WINDOW]                   | IT (Input type)                      |
 | JoinFunction[IT1, IT2, OT]                          | IT1, IT2 (Type of 1. and 2. input), KEY |
@@ -159,20 +158,23 @@ Besides operator uids, there are currently two *hard* preconditions for job migr
 `semi-asynchronous` mode. In case your old job was using this mode, you can still change your job to use 
 `fully-asynchronous` mode before taking the savepoint that is used as the basis for the migration.
 
-2. Another **important** precondition is that for savepoints taken before Flink 1.3.x, all the savepoint data must be
-accessible from the new installation and reside under the same absolute path. Before Flink 1.3.x, the savepoint data is
-typically not self-contained in just the created savepoint file. Additional files can be referenced from inside the
-savepoint file (e.g. the output from state backend snapshots). Since Flink 1.3.x, this is no longer a limitation;
-savepoints can be relocated using typical filesystem operations..
+2. Another **important** precondition is that all the savepoint data must be accessible from the new installation 
+under the same (absolute) path. 
+This also includes access to any additional files that are referenced from inside the 
+savepoint file (the output from state backend snapshots), including, but not limited to additional referenced 
+savepoints from modifications with the [State Processor API]({{ site.baseurl }}/dev/libs/state_processor_api.html). 
+Any savepoint data is currently referenced by absolute paths inside the meta data file and thus a savepoint is 
+not relocatable via typical filesystem operations.
 
+### STEP 1: Stop the existing job with a savepoint
 
-### STEP 1: Take a savepoint in the old Flink version.
+The first major step in version migration is taking a savepoint and stopping your job running on
+the old Flink version.
 
-First major step in job migration is taking a savepoint of your job running in the older Flink version.
 You can do this with the command:
 
 {% highlight shell %}
-$ bin/flink savepoint :jobId [:targetDirectory]
+$ bin/flink stop [--savepointPath :savepointPath] :jobId
 {% endhighlight %}
 
 For more details, please read the [savepoint documentation]({{ site.baseurl }}/ops/state/savepoints.html).
@@ -214,6 +216,9 @@ Savepoints are compatible across Flink versions as indicated by the table below:
       <th class="text-center">1.6.x</th>
       <th class="text-center">1.7.x</th>
       <th class="text-center">1.8.x</th>
+      <th class="text-center">1.9.x</th>
+      <th class="text-center">1.10.x</th>
+      <th class="text-center">1.11.x</th>
       <th class="text-center">Limitations</th>
     </tr>
   </thead>
@@ -223,6 +228,9 @@ Savepoints are compatible across Flink versions as indicated by the table below:
           <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
           <td class="text-center"></td>
           <td class="text-center"></td>
           <td class="text-center"></td>
@@ -242,14 +250,26 @@ Savepoints are compatible across Flink versions as indicated by the table below:
           <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
-          <td class="text-left">When migrating from Flink 1.2.x to Flink 1.3.x+, changing parallelism at the same
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-left">
+          When migrating from Flink 1.2.x to Flink 1.3.x+, changing parallelism at the same
           time is not supported. Users have to first take a savepoint after migrating to Flink 1.3.x+, and then change
-          parallelism. Savepoints created for CEP applications cannot be restored in 1.4.x+.</td>
+          parallelism.
+          <br/><br/>Savepoints created for CEP applications cannot be restored in 1.4.x+.
+          <br/><br/>Savepoints from Flink 1.2 that contain a Scala TraversableSerializer are not compatible with Flink 1.8 anymore
+          because of an update in this serializer. You can get around this restriction by first upgrading to a version between Flink 1.3 and
+          Flink 1.7 and then updating to Flink 1.8.
+          </td>
     </tr>
     <tr>
           <td class="text-center"><strong>1.3.x</strong></td>
           <td class="text-center"></td>
           <td class="text-center"></td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
@@ -268,6 +288,9 @@ Savepoints are compatible across Flink versions as indicated by the table below:
           <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
           <td class="text-left"></td>
     </tr>
     <tr>
@@ -276,6 +299,9 @@ Savepoints are compatible across Flink versions as indicated by the table below:
           <td class="text-center"></td>
           <td class="text-center"></td>
           <td class="text-center"></td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
@@ -295,6 +321,9 @@ Savepoints are compatible across Flink versions as indicated by the table below:
           <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
           <td class="text-left"></td>
     </tr>
     <tr>
@@ -305,6 +334,9 @@ Savepoints are compatible across Flink versions as indicated by the table below:
           <td class="text-center"></td>
           <td class="text-center"></td>
           <td class="text-center"></td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-center">O</td>
           <td class="text-left"></td>
@@ -319,11 +351,55 @@ Savepoints are compatible across Flink versions as indicated by the table below:
           <td class="text-center"></td>
           <td class="text-center"></td>
           <td class="text-center">O</td>
-          <td class="text-left">Savepoints from Flink 1.2 that contain a Scala
-          TraversableSerializer are not compatible with Flink 1.8 anymore
-          because of an update in this serializer. You can get around this
-          restriction by first upgrading to a version between Flink 1.3 and
-          Flink 1.7 and then updating to Flink 1.8.</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-left"></td>
+    </tr>
+    <tr>
+          <td class="text-center"><strong>1.9.x</strong></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-left"></td>
+    </tr>
+    <tr>
+          <td class="text-center"><strong>1.10.x</strong></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center">O</td>
+          <td class="text-center">O</td>
+          <td class="text-left"></td>
+    </tr>
+    <tr>
+          <td class="text-center"><strong>1.11.x</strong></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center"></td>
+          <td class="text-center">O</td>
+          <td class="text-left"></td>
     </tr>
   </tbody>
 </table>

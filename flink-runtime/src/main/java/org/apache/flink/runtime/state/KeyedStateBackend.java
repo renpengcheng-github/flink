@@ -21,7 +21,7 @@ package org.apache.flink.runtime.state;
 import org.apache.flink.api.common.state.State;
 import org.apache.flink.api.common.state.StateDescriptor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.runtime.state.heap.InternalKeyContext;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.util.Disposable;
 
 import java.util.stream.Stream;
@@ -32,13 +32,23 @@ import java.util.stream.Stream;
  * @param <K> The key by which state is keyed.
  */
 public interface KeyedStateBackend<K>
-	extends InternalKeyContext<K>, KeyedStateFactory, PriorityQueueSetFactory, Disposable {
+	extends KeyedStateFactory, PriorityQueueSetFactory, Disposable {
 
 	/**
 	 * Sets the current key that is used for partitioned state.
 	 * @param newKey The new current key.
 	 */
 	void setCurrentKey(K newKey);
+
+	/**
+	 * @return Current key.
+	 */
+	K getCurrentKey();
+
+	/**
+	 * @return Serializer of the key.
+	 */
+	TypeSerializer<K> getKeySerializer();
 
 	/**
 	 * Applies the provided {@link KeyedStateFunction} to the state with the provided
@@ -65,6 +75,14 @@ public interface KeyedStateBackend<K>
 	 * @param namespace Namespace for which existing keys will be returned.
 	 */
 	<N> Stream<K> getKeys(String state, N namespace);
+
+	/**
+	 * @return A stream of all keys for the given state and namespace. Modifications to the state during iterating
+	 * 		   over it keys are not supported. Implementations go not make any ordering guarantees about the returned
+	 * 		   tupes. Two records with the same key or namespace may not be returned near each other in the stream.
+	 * @param state State variable for which existing keys will be returned.
+	 */
+	<N> Stream<Tuple2<K, N>> getKeysAndNamespaces(String state);
 
 	/**
 	 * Creates or retrieves a keyed state backed by this state backend.

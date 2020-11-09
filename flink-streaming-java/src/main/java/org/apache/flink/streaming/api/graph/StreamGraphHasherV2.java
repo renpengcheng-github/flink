@@ -18,12 +18,9 @@
 
 package org.apache.flink.streaming.api.graph;
 
+import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
-import org.apache.flink.streaming.api.operators.AbstractUdfStreamOperator;
-import org.apache.flink.streaming.api.operators.ChainingStrategy;
-import org.apache.flink.streaming.api.operators.StreamOperator;
-import org.apache.flink.streaming.api.transformations.StreamTransformation;
-import org.apache.flink.streaming.runtime.partitioner.ForwardPartitioner;
+import org.apache.flink.streaming.api.operators.UdfStreamOperatorFactory;
 
 import org.apache.flink.shaded.guava18.com.google.common.hash.HashFunction;
 import org.apache.flink.shaded.guava18.com.google.common.hash.Hasher;
@@ -63,7 +60,7 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 	 *
 	 * <p>The complete {@link StreamGraph} is traversed. The hash is either
 	 * computed from the transformation's user-specified id (see
-	 * {@link StreamTransformation#getUid()}) or generated in a deterministic way.
+	 * {@link Transformation#getUid()}) or generated in a deterministic way.
 	 *
 	 * <p>The generated hash is deterministic with respect to:
 	 * <ul>
@@ -252,9 +249,8 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 
 		if (LOG.isDebugEnabled()) {
 			String udfClassName = "";
-			if (node.getOperator() instanceof AbstractUdfStreamOperator) {
-				udfClassName = ((AbstractUdfStreamOperator<?, ?>) node.getOperator())
-						.getUserFunction().getClass().getName();
+			if (node.getOperatorFactory() instanceof UdfStreamOperatorFactory) {
+					udfClassName = ((UdfStreamOperatorFactory) node.getOperatorFactory()).getUserFunctionClassName();
 			}
 
 			LOG.debug("Generated hash '" + byteToHexString(hash) + "' for node " +
@@ -282,21 +278,6 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 	}
 
 	private boolean isChainable(StreamEdge edge, boolean isChainingEnabled, StreamGraph streamGraph) {
-		StreamNode upStreamVertex = streamGraph.getSourceVertex(edge);
-		StreamNode downStreamVertex = streamGraph.getTargetVertex(edge);
-
-		StreamOperator<?> headOperator = upStreamVertex.getOperator();
-		StreamOperator<?> outOperator = downStreamVertex.getOperator();
-
-		return downStreamVertex.getInEdges().size() == 1
-				&& outOperator != null
-				&& headOperator != null
-				&& upStreamVertex.isSameSlotSharingGroup(downStreamVertex)
-				&& outOperator.getChainingStrategy() == ChainingStrategy.ALWAYS
-				&& (headOperator.getChainingStrategy() == ChainingStrategy.HEAD ||
-				headOperator.getChainingStrategy() == ChainingStrategy.ALWAYS)
-				&& (edge.getPartitioner() instanceof ForwardPartitioner)
-				&& upStreamVertex.getParallelism() == downStreamVertex.getParallelism()
-				&& isChainingEnabled;
+		return isChainingEnabled && StreamingJobGraphGenerator.isChainable(edge, streamGraph);
 	}
 }

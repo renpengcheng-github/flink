@@ -30,7 +30,6 @@ import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.memory.DataOutputView;
 import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
-import org.apache.flink.runtime.checkpoint.CheckpointType;
 import org.apache.flink.runtime.state.AsyncSnapshotCallable;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.CheckpointStreamWithResultProvider;
@@ -80,7 +79,7 @@ import static org.apache.flink.contrib.streaming.state.snapshot.RocksSnapshotUti
  */
 public class RocksFullSnapshotStrategy<K> extends RocksDBSnapshotStrategyBase<K> {
 
-	private static final String DESCRIPTION = "Asynchronous incremental RocksDB snapshot";
+	private static final String DESCRIPTION = "Asynchronous full RocksDB snapshot";
 
 	/** This decorator is used to apply compression per key-group for the written snapshot data. */
 	@Nonnull
@@ -151,13 +150,17 @@ public class RocksFullSnapshotStrategy<K> extends RocksDBSnapshotStrategyBase<K>
 		// nothing to do.
 	}
 
+	@Override
+	public void notifyCheckpointAborted(long checkpointId) {
+		// nothing to do.
+	}
+
 	private SupplierWithException<CheckpointStreamWithResultProvider, Exception> createCheckpointStreamSupplier(
 		long checkpointId,
 		CheckpointStreamFactory primaryStreamFactory,
 		CheckpointOptions checkpointOptions) {
 
-		return localRecoveryConfig.isLocalRecoveryEnabled() &&
-			(CheckpointType.SAVEPOINT != checkpointOptions.getCheckpointType()) ?
+		return localRecoveryConfig.isLocalRecoveryEnabled() && !checkpointOptions.getCheckpointType().isSavepoint() ?
 
 			() -> CheckpointStreamWithResultProvider.createDuplicatingStream(
 				checkpointId,

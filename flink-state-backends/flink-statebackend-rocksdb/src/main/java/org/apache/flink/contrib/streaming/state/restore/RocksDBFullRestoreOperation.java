@@ -38,7 +38,6 @@ import org.apache.flink.runtime.state.StateSerializerProvider;
 import org.apache.flink.runtime.state.StreamCompressionDecorator;
 import org.apache.flink.runtime.state.UncompressedStreamCompressionDecorator;
 import org.apache.flink.runtime.state.metainfo.StateMetaInfoSnapshot;
-import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.util.IOUtils;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StateMigrationException;
@@ -48,6 +47,7 @@ import org.rocksdb.ColumnFamilyOptions;
 import org.rocksdb.DBOptions;
 import org.rocksdb.RocksDBException;
 
+import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
 
 import java.io.File;
@@ -62,6 +62,8 @@ import java.util.function.Function;
 import static org.apache.flink.contrib.streaming.state.snapshot.RocksSnapshotUtil.END_OF_KEY_GROUP_MARK;
 import static org.apache.flink.contrib.streaming.state.snapshot.RocksSnapshotUtil.clearMetaDataFollowsFlag;
 import static org.apache.flink.contrib.streaming.state.snapshot.RocksSnapshotUtil.hasMetaDataFollowsFlag;
+import static org.apache.flink.runtime.state.StateUtil.unexpectedStateHandleException;
+import static org.apache.flink.util.Preconditions.checkArgument;
 
 /**
  * Encapsulates the process of restoring a RocksDB instance from a full snapshot.
@@ -88,6 +90,11 @@ public class RocksDBFullRestoreOperation<K> extends AbstractRocksDBRestoreOperat
 	 */
 	private StreamCompressionDecorator keygroupStreamCompressionDecorator;
 
+	/**
+	 * Write batch size used in {@link RocksDBWriteBatchWrapper}.
+	 */
+	private final long writeBatchSize;
+
 	public RocksDBFullRestoreOperation(
 		KeyGroupRange keyGroupRange,
 		int keyGroupPrefixBytes,
@@ -104,7 +111,8 @@ public class RocksDBFullRestoreOperation<K> extends AbstractRocksDBRestoreOperat
 		MetricGroup metricGroup,
 		@Nonnull Collection<KeyedStateHandle> restoreStateHandles,
 		@Nonnull RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
-		TtlTimeProvider ttlTimeProvider) {
+		@Nonnegative long writeBatchSize,
+		Long writeBufferManagerCapacity) {
 		super(
 			keyGroupRange,
 			keyGroupPrefixBytes,
@@ -121,7 +129,9 @@ public class RocksDBFullRestoreOperation<K> extends AbstractRocksDBRestoreOperat
 			metricGroup,
 			restoreStateHandles,
 			ttlCompactFiltersManager,
-			ttlTimeProvider);
+			writeBufferManagerCapacity);
+		checkArgument(writeBatchSize >= 0, "Write batch size have to be no negative.");
+		this.writeBatchSize = writeBatchSize;
 	}
 
 	/**
@@ -136,9 +146,7 @@ public class RocksDBFullRestoreOperation<K> extends AbstractRocksDBRestoreOperat
 			if (keyedStateHandle != null) {
 
 				if (!(keyedStateHandle instanceof KeyGroupsStateHandle)) {
-					throw new IllegalStateException("Unexpected state handle type, " +
-						"expected: " + KeyGroupsStateHandle.class +
-						", but found: " + keyedStateHandle.getClass());
+					throw unexpectedStateHandleException(KeyGroupsStateHandle.class, keyedStateHandle.getClass());
 				}
 				this.currentKeyGroupsStateHandle = (KeyGroupsStateHandle) keyedStateHandle;
 				restoreKeyGroupsInStateHandle();
@@ -169,7 +177,7 @@ public class RocksDBFullRestoreOperation<K> extends AbstractRocksDBRestoreOperat
 	/**
 	 * Restore the KV-state / ColumnFamily meta data for all key-groups referenced by the current state handle.
 	 */
-	private void restoreKVStateMetaData() throws IOException, StateMigrationException, RocksDBException {
+	private void restoreKVStateMetaData() throws IOException, StateMigrationException {
 		KeyedBackendSerializationProxy<K> serializationProxy = readMetaData(currentStateHandleInView);
 
 		this.keygroupStreamCompressionDecorator = serializationProxy.isUsingKeyGroupCompression() ?
@@ -191,7 +199,7 @@ public class RocksDBFullRestoreOperation<K> extends AbstractRocksDBRestoreOperat
 	 */
 	private void restoreKVStateData() throws IOException, RocksDBException {
 		//for all key-groups in the current state handle...
-		try (RocksDBWriteBatchWrapper writeBatchWrapper = new RocksDBWriteBatchWrapper(db)) {
+		try (RocksDBWriteBatchWrapper writeBatchWrapper = new RocksDBWriteBatchWrapper(db, writeBatchSize)) {
 			for (Tuple2<Integer, Long> keyGroupOffset : currentKeyGroupsStateHandle.getGroupRangeOffsets()) {
 				int keyGroup = keyGroupOffset.f0;
 

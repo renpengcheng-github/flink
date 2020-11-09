@@ -20,7 +20,6 @@ package org.apache.flink.runtime.state.ttl.mock;
 
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.state.AggregatingStateDescriptor;
-import org.apache.flink.api.common.state.FoldingStateDescriptor;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
@@ -48,6 +47,7 @@ import org.apache.flink.runtime.state.StateSnapshotTransformer.StateSnapshotTran
 import org.apache.flink.runtime.state.StateSnapshotTransformers;
 import org.apache.flink.runtime.state.heap.HeapPriorityQueueElement;
 import org.apache.flink.runtime.state.heap.HeapPriorityQueueSet;
+import org.apache.flink.runtime.state.heap.InternalKeyContext;
 import org.apache.flink.runtime.state.ttl.TtlStateFactory;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.util.FlinkRuntimeException;
@@ -73,15 +73,13 @@ public class MockKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 			StateDescriptor<S, SV> stateDesc) throws Exception;
 	}
 
-	@SuppressWarnings("deprecation")
 	private static final Map<Class<? extends StateDescriptor>, StateFactory> STATE_FACTORIES =
 		Stream.of(
 			Tuple2.of(ValueStateDescriptor.class, (StateFactory) MockInternalValueState::createState),
 			Tuple2.of(ListStateDescriptor.class, (StateFactory) MockInternalListState::createState),
 			Tuple2.of(MapStateDescriptor.class, (StateFactory) MockInternalMapState::createState),
 			Tuple2.of(ReducingStateDescriptor.class, (StateFactory) MockInternalReducingState::createState),
-			Tuple2.of(AggregatingStateDescriptor.class, (StateFactory) MockInternalAggregatingState::createState),
-			Tuple2.of(FoldingStateDescriptor.class, (StateFactory) MockInternalFoldingState::createState)
+			Tuple2.of(AggregatingStateDescriptor.class, (StateFactory) MockInternalAggregatingState::createState)
 		).collect(Collectors.toMap(t -> t.f0, t -> t.f1));
 
 	private final Map<String, Map<K, Map<Object, Object>>> stateValues;
@@ -92,15 +90,14 @@ public class MockKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 		TaskKvStateRegistry kvStateRegistry,
 		TypeSerializer<K> keySerializer,
 		ClassLoader userCodeClassLoader,
-		int numberOfKeyGroups,
-		KeyGroupRange keyGroupRange,
 		ExecutionConfig executionConfig,
 		TtlTimeProvider ttlTimeProvider,
 		Map<String, Map<K, Map<Object, Object>>> stateValues,
 		Map<String, StateSnapshotTransformer<Object>> stateSnapshotFilters,
-		CloseableRegistry cancelStreamRegistry) {
+		CloseableRegistry cancelStreamRegistry,
+		InternalKeyContext<K> keyContext) {
 		super(kvStateRegistry, keySerializer, userCodeClassLoader,
-			numberOfKeyGroups, keyGroupRange, executionConfig, ttlTimeProvider, cancelStreamRegistry);
+			executionConfig, ttlTimeProvider, cancelStreamRegistry, keyContext);
 		this.stateValues = stateValues;
 		this.stateSnapshotFilters = stateSnapshotFilters;
 	}
@@ -167,10 +164,25 @@ public class MockKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 	}
 
 	@Override
+	public void notifyCheckpointAborted(long checkpointId) {
+		// noop
+	}
+
+	@Override
 	public <N> Stream<K> getKeys(String state, N namespace) {
 		return stateValues.get(state).entrySet().stream()
 			.filter(e -> e.getValue().containsKey(namespace))
 			.map(Map.Entry::getKey);
+	}
+
+	@Override
+	@SuppressWarnings("unchecked")
+	public <N> Stream<Tuple2<K, N>> getKeysAndNamespaces(String state) {
+		return stateValues.get(state).entrySet().stream()
+			.flatMap(entry ->
+				entry.getValue().entrySet().stream()
+					.map(namespace ->
+						Tuple2.of(entry.getKey(), (N) namespace.getKey())));
 	}
 
 	@Nonnull

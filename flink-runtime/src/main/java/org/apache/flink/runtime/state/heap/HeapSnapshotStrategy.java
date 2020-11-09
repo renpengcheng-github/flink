@@ -140,7 +140,7 @@ class HeapSnapshotStrategy<K>
 
 		final SupplierWithException<CheckpointStreamWithResultProvider, Exception> checkpointStreamSupplier =
 
-			localRecoveryConfig.isLocalRecoveryEnabled() ?
+			localRecoveryConfig.isLocalRecoveryEnabled() && !checkpointOptions.getCheckpointType().isSavepoint() ?
 
 				() -> CheckpointStreamWithResultProvider.createDuplicatingStream(
 					checkpointId,
@@ -238,8 +238,9 @@ class HeapSnapshotStrategy<K>
 	@Override
 	public <N, V> StateTable<K, N, V> newStateTable(
 		InternalKeyContext<K> keyContext,
-		RegisteredKeyValueStateBackendMetaInfo<N, V> newMetaInfo) {
-		return snapshotStrategySynchronicityTrait.newStateTable(keyContext, newMetaInfo);
+		RegisteredKeyValueStateBackendMetaInfo<N, V> newMetaInfo,
+		TypeSerializer<K> keySerializer) {
+		return snapshotStrategySynchronicityTrait.newStateTable(keyContext, newMetaInfo, keySerializer);
 	}
 
 	private void processSnapshotMetaInfoForAllStates(

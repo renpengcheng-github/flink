@@ -46,7 +46,7 @@ public class IntermediateResultPartition {
 		this.producer = producer;
 		this.partitionNumber = partitionNumber;
 		this.consumers = new ArrayList<List<ExecutionEdge>>(0);
-		this.partitionId = new IntermediateResultPartitionID();
+		this.partitionId = new IntermediateResultPartitionID(totalResult.getId(), partitionNumber);
 	}
 
 	public ExecutionVertex getProducer() {
@@ -86,6 +86,11 @@ public class IntermediateResultPartition {
 	}
 
 	void resetForNewExecution() {
+		if (getResultType().isBlocking() && hasDataProduced) {
+			// A BLOCKING result partition with data produced means it is finished
+			// Need to add the running producer count of the result on resetting it
+			totalResult.incrementNumberOfRunningProducersAndGetRemaining();
+		}
 		hasDataProduced = false;
 	}
 

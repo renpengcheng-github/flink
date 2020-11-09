@@ -22,20 +22,25 @@ import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.apache.flink.api.java.typeutils.RowTypeInfo
 import org.apache.flink.api.scala._
 import org.apache.flink.api.scala.typeutils.CaseClassTypeInfo
-import org.apache.flink.table.api.Types
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.expressions.AggFunctionCall
-import org.apache.flink.table.functions.AggregateFunction
+import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
+import org.apache.flink.table.api._
+import org.apache.flink.table.api.bridge.scala.internal.StreamTableEnvironmentImpl
+import org.apache.flink.table.catalog.{FunctionCatalog, UnresolvedIdentifier}
+import org.apache.flink.table.delegation.Executor
+import org.apache.flink.table.functions.{AggregateFunction, AggregateFunctionDefinition}
+import org.apache.flink.table.module.ModuleManager
 import org.apache.flink.table.utils.TableTestUtil.{streamTableNode, term, unaryNode}
-import org.apache.flink.table.utils.{StreamTableTestUtil, TableTestBase}
+import org.apache.flink.table.utils.{CatalogManagerMocks, PlannerMock, StreamTableTestUtil, TableTestBase}
 import org.apache.flink.types.Row
+
 import org.junit.Assert.{assertEquals, assertTrue}
-import org.junit.{Ignore, Test}
+import org.junit.Test
+import org.mockito.Mockito
 
 class AggregateTest extends TableTestBase {
 
   private val streamUtil: StreamTableTestUtil = streamTestUtil()
-  streamUtil.addTable[(Int, String, Long)](
+  private val table = streamUtil.addTable[(Int, String, Long)](
     "MyTable", 'a, 'b, 'c, 'proctime.proctime, 'rowtime.rowtime)
 
   @Test
@@ -49,7 +54,7 @@ class AggregateTest extends TableTestBase {
           "DataStreamGroupAggregate",
           unaryNode(
             "DataStreamCalc",
-            streamTableNode(0),
+            streamTableNode(table),
             term("select", "b", "a")
           ),
           term("groupBy", "b"),
@@ -62,28 +67,42 @@ class AggregateTest extends TableTestBase {
 
   @Test
   def testUserDefinedAggregateFunctionWithScalaAccumulator(): Unit = {
-    streamUtil.addFunction("udag", new MyAgg)
-    val call = streamUtil
-      .tableEnv
-      .functionCatalog
-      .lookupFunction("udag", Seq())
-      .asInstanceOf[AggFunctionCall]
+    val config = new TableConfig
+    val catalogManager = CatalogManagerMocks.createEmptyCatalogManager()
+    val moduleManager = new ModuleManager
+    val functionCatalog = new FunctionCatalog(config, catalogManager, moduleManager)
+    val tablEnv = new StreamTableEnvironmentImpl(
+      catalogManager,
+      moduleManager,
+      functionCatalog,
+      config,
+      Mockito.mock(classOf[StreamExecutionEnvironment]),
+      new PlannerMock,
+      Mockito.mock(classOf[Executor]),
+      true,
+      Thread.currentThread().getContextClassLoader
+    )
 
-    val typeInfo = call.accTypeInfo
+    tablEnv.registerFunction("udag", new MyAgg)
+    val aggFunctionDefinition = functionCatalog
+      .lookupFunction(UnresolvedIdentifier.of("udag")).get()
+      .getFunctionDefinition
+      .asInstanceOf[AggregateFunctionDefinition]
+
+    val typeInfo = aggFunctionDefinition.getAccumulatorTypeInfo
     assertTrue(typeInfo.isInstanceOf[CaseClassTypeInfo[_]])
     assertEquals(2, typeInfo.getTotalFields)
     val caseTypeInfo = typeInfo.asInstanceOf[CaseClassTypeInfo[_]]
     assertEquals(Types.LONG, caseTypeInfo.getTypeAt(0))
     assertEquals(Types.LONG, caseTypeInfo.getTypeAt(1))
 
-    streamUtil.addFunction("udag2", new MyAgg2)
-    val call2 = streamUtil
-      .tableEnv
-      .functionCatalog
-      .lookupFunction("udag2", Seq())
-      .asInstanceOf[AggFunctionCall]
+    tablEnv.registerFunction("udag2", new MyAgg2)
+    val aggFunctionDefinition2 = functionCatalog
+      .lookupFunction(UnresolvedIdentifier.of("udag2")).get()
+      .getFunctionDefinition
+      .asInstanceOf[AggregateFunctionDefinition]
 
-    val typeInfo2 = call2.accTypeInfo
+    val typeInfo2 = aggFunctionDefinition2.getAccumulatorTypeInfo
     assertTrue(s"actual type: $typeInfo2", typeInfo2.isInstanceOf[RowTypeInfo])
     assertEquals(2, typeInfo2.getTotalFields)
     val rowTypeInfo = typeInfo2.asInstanceOf[RowTypeInfo]

@@ -21,7 +21,6 @@ package org.apache.flink.runtime.state.heap;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.state.AggregatingStateDescriptor;
-import org.apache.flink.api.common.state.FoldingStateDescriptor;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
@@ -37,7 +36,6 @@ import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.state.AbstractKeyedStateBackend;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.KeyExtractorFunction;
-import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.KeyGroupedInternalPriorityQueue;
 import org.apache.flink.runtime.state.Keyed;
 import org.apache.flink.runtime.state.KeyedStateFunction;
@@ -47,7 +45,6 @@ import org.apache.flink.runtime.state.PriorityComparable;
 import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.RegisteredPriorityQueueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.SnapshotResult;
-import org.apache.flink.runtime.state.StateSerializerProvider;
 import org.apache.flink.runtime.state.StateSnapshotRestore;
 import org.apache.flink.runtime.state.StateSnapshotTransformer.StateSnapshotTransformFactory;
 import org.apache.flink.runtime.state.StateSnapshotTransformers;
@@ -84,8 +81,7 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 			Tuple2.of(ListStateDescriptor.class, (StateFactory) HeapListState::create),
 			Tuple2.of(MapStateDescriptor.class, (StateFactory) HeapMapState::create),
 			Tuple2.of(AggregatingStateDescriptor.class, (StateFactory) HeapAggregatingState::create),
-			Tuple2.of(ReducingStateDescriptor.class, (StateFactory) HeapReducingState::create),
-			Tuple2.of(FoldingStateDescriptor.class, (StateFactory) HeapFoldingState::create)
+			Tuple2.of(ReducingStateDescriptor.class, (StateFactory) HeapReducingState::create)
 		).collect(Collectors.toMap(t -> t.f0, t -> t.f1));
 
 	/**
@@ -115,10 +111,8 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
 	public HeapKeyedStateBackend(
 		TaskKvStateRegistry kvStateRegistry,
-		StateSerializerProvider<K> keySerializerProvider,
+		TypeSerializer<K> keySerializer,
 		ClassLoader userCodeClassLoader,
-		int numberOfKeyGroups,
-		KeyGroupRange keyGroupRange,
 		ExecutionConfig executionConfig,
 		TtlTimeProvider ttlTimeProvider,
 		CloseableRegistry cancelStreamRegistry,
@@ -127,10 +121,17 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 		Map<String, HeapPriorityQueueSnapshotRestoreWrapper> registeredPQStates,
 		LocalRecoveryConfig localRecoveryConfig,
 		HeapPriorityQueueSetFactory priorityQueueSetFactory,
-		HeapSnapshotStrategy<K> snapshotStrategy
-	) {
-		super(kvStateRegistry, keySerializerProvider, userCodeClassLoader, numberOfKeyGroups,
-			keyGroupRange, executionConfig, ttlTimeProvider, cancelStreamRegistry, keyGroupCompressionDecorator);
+		HeapSnapshotStrategy<K> snapshotStrategy,
+		InternalKeyContext<K> keyContext) {
+		super(
+			kvStateRegistry,
+			keySerializer,
+			userCodeClassLoader,
+			executionConfig,
+			ttlTimeProvider,
+			cancelStreamRegistry,
+			keyGroupCompressionDecorator,
+			keyContext);
 		this.registeredKVStates = registeredKVStates;
 		this.registeredPQStates = registeredPQStates;
 		this.localRecoveryConfig = localRecoveryConfig;
@@ -236,7 +237,7 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 				newStateSerializer,
 				snapshotTransformFactory);
 
-			stateTable = snapshotStrategy.newStateTable(this, newMetaInfo);
+			stateTable = snapshotStrategy.newStateTable(keyContext, newMetaInfo, keySerializer);
 			registeredKVStates.put(stateDesc.getName(), stateTable);
 		}
 
@@ -253,6 +254,18 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 		final StateSnapshotRestore stateSnapshotRestore = registeredKVStates.get(state);
 		StateTable<K, N, ?> table = (StateTable<K, N, ?>) stateSnapshotRestore;
 		return table.getKeys(namespace);
+	}
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public <N> Stream<Tuple2<K, N>> getKeysAndNamespaces(String state) {
+		if (!registeredKVStates.containsKey(state)) {
+			return Stream.empty();
+		}
+
+		final StateSnapshotRestore stateSnapshotRestore = registeredKVStates.get(state);
+		StateTable<K, N, ?> table = (StateTable<K, N, ?>) stateSnapshotRestore;
+		return table.getKeysAndNamespaces();
 	}
 
 	@Override
@@ -306,6 +319,11 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 	@Override
 	public void notifyCheckpointComplete(long checkpointId) {
 		//Nothing to do
+	}
+
+	@Override
+	public void notifyCheckpointAborted(long checkpointId) {
+		// nothing to do
 	}
 
 	@Override

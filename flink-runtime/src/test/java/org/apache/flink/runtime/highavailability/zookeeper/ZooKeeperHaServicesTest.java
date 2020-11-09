@@ -34,9 +34,10 @@ import org.apache.flink.runtime.zookeeper.ZooKeeperResource;
 import org.apache.flink.util.TestLogger;
 import org.apache.flink.util.function.ThrowingConsumer;
 
-import org.apache.curator.framework.CuratorFramework;
-import org.apache.curator.framework.CuratorFrameworkFactory;
-import org.apache.curator.retry.RetryNTimes;
+import org.apache.flink.shaded.curator4.org.apache.curator.framework.CuratorFramework;
+import org.apache.flink.shaded.curator4.org.apache.curator.framework.CuratorFrameworkFactory;
+import org.apache.flink.shaded.curator4.org.apache.curator.retry.RetryNTimes;
+
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -191,10 +192,13 @@ public class ZooKeeperHaServicesTest extends TestLogger {
 			final LeaderElectionService resourceManagerLeaderElectionService = zooKeeperHaServices.getResourceManagerLeaderElectionService();
 			final RunningJobsRegistry runningJobsRegistry = zooKeeperHaServices.getRunningJobsRegistry();
 
-			resourceManagerLeaderRetriever.start(new TestingListener());
+			final TestingListener listener = new TestingListener();
+			resourceManagerLeaderRetriever.start(listener);
 			resourceManagerLeaderElectionService.start(new TestingContender("foobar", resourceManagerLeaderElectionService));
 			final JobID jobId = new JobID();
 			runningJobsRegistry.setJobRunning(jobId);
+
+			listener.waitForNewLeader(2000L);
 
 			resourceManagerLeaderRetriever.stop();
 			resourceManagerLeaderElectionService.stop();

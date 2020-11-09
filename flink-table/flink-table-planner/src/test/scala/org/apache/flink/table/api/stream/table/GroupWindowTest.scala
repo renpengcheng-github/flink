@@ -19,12 +19,11 @@
 package org.apache.flink.table.api.stream.table
 
 import org.apache.flink.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.runtime.utils.JavaUserDefinedAggFunctions.{WeightedAvg, WeightedAvgWithMerge}
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.expressions.WindowReference
-import org.apache.flink.table.plan.logical._
-import org.apache.flink.table.utils.TableTestUtil._
 import org.apache.flink.table.utils.TableTestBase
+import org.apache.flink.table.utils.TableTestUtil._
+
 import org.junit.{Ignore, Test}
 
 class GroupWindowTest extends TableTestBase {
@@ -35,10 +34,10 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'proctime.proctime)
 
     val windowedTable = table
-      .window(Tumble over 50.milli on 'proctime as 'w1)
+      .window(Tumble over 50.millis on 'proctime as 'w1)
       .groupBy('w1, 'string)
       .select('w1.proctime as 'proctime, 'string, 'int.count)
-      .window(Slide over 20.milli every 10.milli on 'proctime as 'w2)
+      .window(Slide over 20.millis every 10.millis on 'proctime as 'w2)
       .groupBy('w2)
       .select('string.count)
 
@@ -50,28 +49,17 @@ class GroupWindowTest extends TableTestBase {
           "DataStreamGroupWindowAggregate",
           unaryNode(
             "DataStreamCalc",
-            streamTableNode(0),
-            term("select", "string", "int", "proctime")
+            streamTableNode(table),
+            term("select", "int", "string", "proctime")
           ),
           term("groupBy", "string"),
-          term(
-            "window",
-            TumblingGroupWindow(
-              WindowReference("w1"),
-              'proctime,
-              50.milli)),
-          term("select", "string", "COUNT(int) AS TMP_1", "proctime('w1) AS TMP_0")
+          term("window", "TumblingGroupWindow('w1, 'proctime, 50.millis)"),
+          term("select", "string", "COUNT(int) AS EXPR$1", "proctime('w1) AS EXPR$0")
         ),
-        term("select", "string", "TMP_0 AS proctime")
+        term("select", "EXPR$0 AS proctime", "string")
       ),
-      term(
-        "window",
-        SlidingGroupWindow(
-          WindowReference("w2"),
-          'proctime,
-          20.milli,
-          10.milli)),
-      term("select", "COUNT(string) AS TMP_2")
+      term("window", "SlidingGroupWindow('w2, 'proctime, 20.millis, 10.millis)"),
+      term("select", "COUNT(string) AS EXPR$0")
     )
     util.verifyTable(windowedTable, expected)
   }
@@ -82,7 +70,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'proctime.proctime)
 
     val windowedTable = table
-      .window(Tumble over 50.milli on 'proctime as 'w)
+      .window(Tumble over 50.millis on 'proctime as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count)
 
@@ -90,17 +78,12 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "string", "int", "proctime")
+        streamTableNode(table),
+        term("select", "int", "string", "proctime")
       ),
       term("groupBy", "string"),
-      term(
-        "window",
-        TumblingGroupWindow(
-          WindowReference("w"),
-          'proctime,
-          50.milli)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "TumblingGroupWindow('w, 'proctime, 50.millis)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -120,14 +103,12 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "string", "int", "proctime")
+        streamTableNode(table),
+        term("select", "int", "string", "proctime")
       ),
       term("groupBy", "string"),
-      term(
-        "window",
-        TumblingGroupWindow(WindowReference("w"), 'proctime, 2.rows)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "TumblingGroupWindow('w, 'proctime, 2)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -139,21 +120,16 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long.rowtime, 'int, 'string)
 
     val windowedTable = table
-      .window(Tumble over 5.milli on 'long as 'w)
+      .window(Tumble over 5.millis on 'long as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count)
 
     val expected = unaryNode(
       "DataStreamGroupWindowAggregate",
-      streamTableNode(0),
+      streamTableNode(table),
       term("groupBy", "string"),
-      term(
-        "window",
-        TumblingGroupWindow(
-          WindowReference("w"),
-          'long,
-          5.milli)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "TumblingGroupWindow('w, 'long, 5.millis)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -167,21 +143,16 @@ class GroupWindowTest extends TableTestBase {
     val weightedAvg = new WeightedAvgWithMerge
 
     val windowedTable = table
-      .window(Tumble over 5.milli on 'rowtime as 'w)
+      .window(Tumble over 5.millis on 'rowtime as 'w)
       .groupBy('w, 'string)
       .select('string, weightedAvg('long, 'int))
 
     val expected = unaryNode(
       "DataStreamGroupWindowAggregate",
-      streamTableNode(0),
+      streamTableNode(table),
       term("groupBy", "string"),
-      term(
-        "window",
-        TumblingGroupWindow(
-          WindowReference("w"),
-          'rowtime,
-          5.milli)),
-      term("select", "string", "myWeightedAvg(long, int) AS TMP_0")
+      term("window", "TumblingGroupWindow('w, 'rowtime, 5.millis)"),
+      term("select", "string", "myWeightedAvg(long, int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -193,7 +164,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'proctime.proctime)
 
     val windowedTable = table
-      .window(Slide over 50.milli every 50.milli on 'proctime as 'w)
+      .window(Slide over 50.millis every 50.millis on 'proctime as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count)
 
@@ -201,18 +172,12 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "string", "int", "proctime")
+        streamTableNode(table),
+        term("select", "int", "string", "proctime")
       ),
       term("groupBy", "string"),
-      term(
-        "window",
-        SlidingGroupWindow(
-          WindowReference("w"),
-          'proctime,
-          50.milli,
-          50.milli)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'proctime, 50.millis, 50.millis)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -232,18 +197,12 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "string", "int", "proctime")
+        streamTableNode(table),
+        term("select", "int", "string", "proctime")
       ),
       term("groupBy", "string"),
-      term(
-        "window",
-        SlidingGroupWindow(
-          WindowReference("w"),
-          'proctime,
-          2.rows,
-          1.rows)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'proctime, 2, 1)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -255,7 +214,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'rowtime.rowtime)
 
     val windowedTable = table
-      .window(Slide over 8.milli every 10.milli on 'rowtime as 'w)
+      .window(Slide over 8.millis every 10.millis on 'rowtime as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count)
 
@@ -263,12 +222,12 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "string", "int", "rowtime")
+        streamTableNode(table),
+        term("select", "int", "string", "rowtime")
       ),
       term("groupBy", "string"),
-      term("window", SlidingGroupWindow(WindowReference("w"), 'rowtime, 8.milli, 10.milli)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'rowtime, 8.millis, 10.millis)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -281,22 +240,16 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long.rowtime, 'int, 'string)
 
     val windowedTable = table
-      .window(Slide over 8.milli every 10.milli on 'long as 'w)
+      .window(Slide over 8.millis every 10.millis on 'long as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count)
 
     val expected = unaryNode(
       "DataStreamGroupWindowAggregate",
-      streamTableNode(0),
+      streamTableNode(table),
       term("groupBy", "string"),
-      term(
-        "window",
-        SlidingGroupWindow(
-          WindowReference("w"),
-          'long,
-          8.milli,
-          10.milli)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'long, 8.millis, 10.millis)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -310,16 +263,16 @@ class GroupWindowTest extends TableTestBase {
     val weightedAvg = new WeightedAvgWithMerge
 
     val windowedTable = table
-      .window(Slide over 8.milli every 10.milli on 'rowtime as 'w)
+      .window(Slide over 8.millis every 10.millis on 'rowtime as 'w)
       .groupBy('w, 'string)
       .select('string, weightedAvg('long, 'int))
 
     val expected = unaryNode(
       "DataStreamGroupWindowAggregate",
-      streamTableNode(0),
+      streamTableNode(table),
       term("groupBy", "string"),
-      term("window", SlidingGroupWindow(WindowReference("w"), 'rowtime, 8.milli, 10.milli)),
-      term("select", "string", "myWeightedAvg(long, int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'rowtime, 8.millis, 10.millis)"),
+      term("select", "string", "myWeightedAvg(long, int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -331,16 +284,16 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long.rowtime, 'int, 'string)
 
     val windowedTable = table
-      .window(Session withGap 7.milli on 'long as 'w)
+      .window(Session withGap 7.millis on 'long as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count)
 
     val expected = unaryNode(
       "DataStreamGroupWindowAggregate",
-      streamTableNode(0),
+      streamTableNode(table),
       term("groupBy", "string"),
-      term("window", SessionGroupWindow(WindowReference("w"), 'long, 7.milli)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "SessionGroupWindow('w, 'long, 7.millis)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -354,16 +307,16 @@ class GroupWindowTest extends TableTestBase {
     val weightedAvg = new WeightedAvgWithMerge
 
     val windowedTable = table
-      .window(Session withGap 7.milli on 'rowtime as 'w)
+      .window(Session withGap 7.millis on 'rowtime as 'w)
       .groupBy('w, 'string)
       .select('string, weightedAvg('long, 'int))
 
     val expected = unaryNode(
       "DataStreamGroupWindowAggregate",
-      streamTableNode(0),
+      streamTableNode(table),
       term("groupBy", "string"),
-      term("window", SessionGroupWindow(WindowReference("w"), 'rowtime, 7.milli)),
-      term("select", "string", "myWeightedAvg(long, int) AS TMP_0")
+      term("window", "SessionGroupWindow('w, 'rowtime, 7.millis)"),
+      term("select", "string", "myWeightedAvg(long, int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -375,7 +328,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'proctime.proctime)
 
     val windowedTable = table
-      .window(Tumble over 50.milli on 'proctime as 'w)
+      .window(Tumble over 50.millis on 'proctime as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count)
 
@@ -383,17 +336,12 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "string", "int", "proctime")
+        streamTableNode(table),
+        term("select", "int", "string", "proctime")
       ),
       term("groupBy", "string"),
-      term(
-        "window",
-        TumblingGroupWindow(
-          WindowReference("w"),
-          'proctime,
-          50.milli)),
-      term("select", "string", "COUNT(int) AS TMP_0")
+      term("window", "TumblingGroupWindow('w, 'proctime, 50.millis)"),
+      term("select", "string", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -413,16 +361,11 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "int", "proctime")
       ),
-      term(
-        "window",
-        TumblingGroupWindow(
-          WindowReference("w"),
-          'proctime,
-          2.rows)),
-      term("select", "COUNT(int) AS TMP_0")
+      term("window", "TumblingGroupWindow('w, 'proctime, 2)"),
+      term("select", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -434,7 +377,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'rowtime.rowtime)
 
     val windowedTable = table
-      .window(Tumble over 5.milli on 'rowtime as 'w)
+      .window(Tumble over 5.millis on 'rowtime as 'w)
       .groupBy('w)
       .select('int.count)
 
@@ -442,11 +385,11 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "int", "rowtime")
       ),
-      term("window", TumblingGroupWindow(WindowReference("w"), 'rowtime, 5.milli)),
-      term("select", "COUNT(int) AS TMP_0")
+      term("window", "TumblingGroupWindow('w, 'rowtime, 5.millis)"),
+      term("select", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -459,7 +402,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long.rowtime, 'int, 'string)
 
     val windowedTable = table
-      .window(Tumble over 5.milli on 'long as 'w)
+      .window(Tumble over 5.millis on 'long as 'w)
       .groupBy('w)
       .select('int.count)
 
@@ -467,16 +410,11 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "int", "long")
       ),
-      term(
-        "window",
-        TumblingGroupWindow(
-          WindowReference("w"),
-          'long,
-          5.milli)),
-      term("select", "COUNT(int) AS TMP_0")
+      term("window", "TumblingGroupWindow('w, 'long, 5.millis)"),
+      term("select", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -488,7 +426,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'proctime.proctime)
 
     val windowedTable = table
-      .window(Slide over 50.milli every 50.milli on 'proctime as 'w)
+      .window(Slide over 50.millis every 50.millis on 'proctime as 'w)
       .groupBy('w)
       .select('int.count)
 
@@ -496,17 +434,11 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "int", "proctime")
       ),
-      term(
-        "window",
-        SlidingGroupWindow(
-          WindowReference("w"),
-          'proctime,
-          50.milli,
-          50.milli)),
-      term("select", "COUNT(int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'proctime, 50.millis, 50.millis)"),
+      term("select", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -526,17 +458,11 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "int", "proctime")
       ),
-      term(
-        "window",
-        SlidingGroupWindow(
-          WindowReference("w"),
-          'proctime,
-          2.rows,
-          1.rows)),
-      term("select", "COUNT(int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'proctime, 2, 1)"),
+      term("select", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -548,7 +474,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'rowtime.rowtime)
 
     val windowedTable = table
-      .window(Slide over 8.milli every 10.milli on 'rowtime as 'w)
+      .window(Slide over 8.millis every 10.millis on 'rowtime as 'w)
       .groupBy('w)
       .select('int.count)
 
@@ -556,11 +482,11 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "int", "rowtime")
       ),
-      term("window", SlidingGroupWindow(WindowReference("w"), 'rowtime, 8.milli, 10.milli)),
-      term("select", "COUNT(int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'rowtime, 8.millis, 10.millis)"),
+      term("select", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -573,7 +499,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long.rowtime, 'int, 'string)
 
     val windowedTable = table
-      .window(Slide over 8.milli every 10.milli on 'long as 'w)
+      .window(Slide over 8.millis every 10.millis on 'long as 'w)
       .groupBy('w)
       .select('int.count)
 
@@ -581,11 +507,11 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "int", "long")
+        streamTableNode(table),
+        term("select", "long", "int")
       ),
-      term("window", SlidingGroupWindow(WindowReference("w"), 'long, 8.milli, 10.milli)),
-      term("select", "COUNT(int) AS TMP_0")
+      term("window", "SlidingGroupWindow('w, 'long, 8.millis, 10.millis)"),
+      term("select", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -597,7 +523,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long.rowtime, 'int, 'string)
 
     val windowedTable = table
-      .window(Session withGap 7.milli on 'long as 'w)
+      .window(Session withGap 7.millis on 'long as 'w)
       .groupBy('w)
       .select('int.count)
 
@@ -605,16 +531,11 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "int", "long")
+        streamTableNode(table),
+        term("select", "long", "int")
       ),
-      term(
-        "window",
-        SessionGroupWindow(
-          WindowReference("w"),
-          'long,
-          7.milli)),
-      term("select", "COUNT(int) AS TMP_0")
+      term("window", "SessionGroupWindow('w, 'long, 7.millis)"),
+      term("select", "COUNT(int) AS EXPR$0")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -626,7 +547,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'rowtime.rowtime)
 
     val windowedTable = table
-      .window(Tumble over 5.milli on 'rowtime as 'w)
+      .window(Tumble over 5.millis on 'rowtime as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count, 'w.start, 'w.end)
 
@@ -634,16 +555,16 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "string", "int", "rowtime")
+        streamTableNode(table),
+        term("select", "int", "string", "rowtime")
       ),
       term("groupBy", "string"),
-      term("window", TumblingGroupWindow(WindowReference("w"), 'rowtime, 5.milli)),
+      term("window", "TumblingGroupWindow('w, 'rowtime, 5.millis)"),
       term("select",
         "string",
-        "COUNT(int) AS TMP_0",
-        "start('w) AS TMP_1",
-        "end('w) AS TMP_2")
+        "COUNT(int) AS EXPR$0",
+        "start('w) AS EXPR$1",
+        "end('w) AS EXPR$2")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -672,17 +593,17 @@ class GroupWindowTest extends TableTestBase {
         "DataStreamCalc",
         unaryNode(
           "DataStreamGroupWindowAggregate",
-          streamTableNode(0),
+          streamTableNode(table),
           term("groupBy", "string, int2, int3"),
-          term("window", SlidingGroupWindow(WindowReference("w"), 'proctime,  2.rows, 1.rows)),
+          term("window", "SlidingGroupWindow('w, 'proctime, 2, 1)"),
           term(
             "select",
             "string",
             "int2",
             "int3",
-            "WeightedAvg(long, int) AS TMP_0")
+            "WeightedAvg(long, int) AS EXPR$0")
         ),
-        term("select","TMP_0")
+        term("select","EXPR$0")
       )
 
     util.verifyTable(windowedTable, expected)
@@ -694,7 +615,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'rowtime.rowtime)
 
     val windowedTable = table
-      .window(Slide over 10.milli every 5.milli on 'rowtime as 'w)
+      .window(Slide over 10.millis every 5.millis on 'rowtime as 'w)
       .groupBy('w, 'string)
       .select('string, 'int.count, 'w.start, 'w.end)
 
@@ -702,16 +623,16 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamGroupWindowAggregate",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "string", "int", "rowtime")
+        streamTableNode(table),
+        term("select", "int", "string", "rowtime")
       ),
       term("groupBy", "string"),
-      term("window", SlidingGroupWindow(WindowReference("w"), 'rowtime, 10.milli, 5.milli)),
+      term("window", "SlidingGroupWindow('w, 'rowtime, 10.millis, 5.millis)"),
       term("select",
         "string",
-        "COUNT(int) AS TMP_0",
-        "start('w) AS TMP_1",
-        "end('w) AS TMP_2")
+        "COUNT(int) AS EXPR$0",
+        "start('w) AS EXPR$1",
+        "end('w) AS EXPR$2")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -723,7 +644,7 @@ class GroupWindowTest extends TableTestBase {
     val table = util.addTable[(Long, Int, String)]('long.rowtime, 'int, 'string)
 
     val windowedTable = table
-      .window(Session withGap 3.milli on 'long as 'w)
+      .window(Session withGap 3.millis on 'long as 'w)
       .groupBy('w, 'string)
       .select('w.end as 'we1, 'string, 'int.count as 'cnt, 'w.start as 'ws, 'w.end as 'we2)
 
@@ -731,16 +652,16 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamCalc",
       unaryNode(
         "DataStreamGroupWindowAggregate",
-        streamTableNode(0),
+        streamTableNode(table),
         term("groupBy", "string"),
-        term("window", SessionGroupWindow(WindowReference("w"), 'long, 3.milli)),
+        term("window", "SessionGroupWindow('w, 'long, 3.millis)"),
         term("select",
           "string",
-          "COUNT(int) AS TMP_1",
-          "end('w) AS TMP_0",
-          "start('w) AS TMP_2")
+          "COUNT(int) AS EXPR$1",
+          "end('w) AS EXPR$0",
+          "start('w) AS EXPR$2")
       ),
-      term("select", "TMP_0 AS we1", "string", "TMP_1 AS cnt", "TMP_2 AS ws", "TMP_0 AS we2")
+      term("select", "EXPR$0 AS we1", "string", "EXPR$1 AS cnt", "EXPR$2 AS ws", "EXPR$0 AS we2")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -761,23 +682,23 @@ class GroupWindowTest extends TableTestBase {
       "DataStreamCalc",
       unaryNode(
         "DataStreamGroupWindowAggregate",
-        streamTableNode(0),
+        streamTableNode(table),
         term("groupBy", "string"),
-        term("window", TumblingGroupWindow(WindowReference("w"), 'long, 5.millis)),
+        term("window", "TumblingGroupWindow('w, 'long, 5.millis)"),
         term("select",
           "string",
-          "SUM(int) AS TMP_0",
-          "start('w) AS TMP_1",
-          "end('w) AS TMP_2")
+          "SUM(int) AS EXPR$0",
+          "start('w) AS EXPR$1",
+          "end('w) AS EXPR$2")
       ),
       term("select",
         "string",
-        "+(TMP_0, 1) AS s1",
-        "+(TMP_0, 3) AS s2",
-        "TMP_1 AS x",
-        "TMP_1 AS x2",
-        "TMP_2 AS x3",
-        "TMP_2")
+        "+(EXPR$0, 1) AS s1",
+        "+(EXPR$0, 3) AS s2",
+        "EXPR$1 AS x",
+        "EXPR$1 AS x2",
+        "EXPR$2 AS x3",
+        "EXPR$2")
     )
 
     util.verifyTable(windowedTable, expected)
@@ -800,29 +721,25 @@ class GroupWindowTest extends TableTestBase {
           "DataStreamGroupWindowAggregate",
           unaryNode(
             "DataStreamCalc",
-            streamTableNode(0),
-            term("select", "c", "rowtime",
-              "*(c, c) AS $f2", "*(c, c) AS $f3", "*(c, c) AS $f4", "*(c, c) AS $f5")
+            streamTableNode(table),
+            term("select", "rowtime", "c", "*(c, c) AS $f2")
           ),
-          term("window", TumblingGroupWindow('w, 'rowtime, 900000.millis)),
+          term("window", "TumblingGroupWindow('w, 'rowtime, 900000.millis)"),
           term("select",
             "SUM($f2) AS $f0",
             "SUM(c) AS $f1",
             "COUNT(c) AS $f2",
-            "SUM($f3) AS $f3",
-            "SUM($f4) AS $f4",
-            "SUM($f5) AS $f5",
-            "start('w) AS TMP_4",
-            "end('w) AS TMP_5")
+            "start('w) AS EXPR$4",
+            "end('w) AS EXPR$5")
         ),
         term("select",
-          "CAST(/(-($f0, /(*($f1, $f1), $f2)), $f2)) AS TMP_0",
-          "CAST(/(-($f3, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1)))) AS TMP_1",
-          "CAST(POWER(/(-($f4, /(*($f1, $f1), $f2)), $f2), 0.5)) AS TMP_2",
-          "CAST(POWER(/(-($f5, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null, -($f2, 1))), 0.5)) " +
-            "AS TMP_3",
-          "TMP_4",
-          "TMP_5")
+          "/(-($f0, /(*($f1, $f1), $f2)), $f2) AS EXPR$0",
+          "/(-($f0, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null:BIGINT, -($f2, 1))) AS EXPR$1",
+          "CAST(POWER(/(-($f0, /(*($f1, $f1), $f2)), $f2), 0.5:DECIMAL(2, 1))) AS EXPR$2",
+          "CAST(POWER(/(-($f0, /(*($f1, $f1), $f2)), CASE(=($f2, 1), null:BIGINT, " +
+            "-($f2, 1))), 0.5:DECIMAL(2, 1))) AS EXPR$3",
+          "EXPR$4",
+          "EXPR$5")
       )
 
     util.verifyTable(windowedTable, expected)

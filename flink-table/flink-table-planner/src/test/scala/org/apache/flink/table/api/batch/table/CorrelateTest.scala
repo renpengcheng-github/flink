@@ -18,14 +18,15 @@
 
 package org.apache.flink.table.api.batch.table
 
-import org.apache.calcite.rel.rules.{CalcMergeRule, FilterCalcMergeRule, ProjectCalcMergeRule}
-import org.apache.calcite.tools.RuleSets
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.calcite.{CalciteConfig, CalciteConfigBuilder}
+import org.apache.flink.table.api._
+import org.apache.flink.table.calcite.CalciteConfigBuilder
 import org.apache.flink.table.plan.rules.FlinkRuleSets
 import org.apache.flink.table.utils.TableTestUtil._
 import org.apache.flink.table.utils.{TableFunc0, TableFunc1, TableTestBase}
+
+import org.apache.calcite.rel.rules.CoreRules
+import org.apache.calcite.tools.RuleSets
 import org.junit.Test
 
 import scala.collection.JavaConversions._
@@ -44,7 +45,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", s"${function.functionIdentifier}($$2)"),
         term("correlate", s"table(${function.getClass.getSimpleName}(c))"),
         term("select", "a", "b", "c", "s"),
@@ -65,7 +66,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", s"${function.functionIdentifier}($$2, '$$')"),
         term("correlate", s"table(${function.getClass.getSimpleName}(c, '$$'))"),
         term("select", "a", "b", "c", "s"),
@@ -91,7 +92,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", s"${function.functionIdentifier}($$2)"),
         term("correlate", s"table(${function.getClass.getSimpleName}(c))"),
         term("select", "a", "b", "c", "s"),
@@ -118,7 +119,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", s"${function.functionIdentifier}($$2)"),
         term("correlate", s"table(${function.getClass.getSimpleName}(c))"),
         term("select", "a", "b", "c", "s"),
@@ -148,7 +149,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(sourceTable),
         term("invocation", s"${function.functionIdentifier}($$2)"),
         term("correlate", s"table(${function.getClass.getSimpleName}(c))"),
         term("select", "a", "b", "c", "d", "e"),
@@ -169,17 +170,17 @@ class CorrelateTest extends TableTestBase {
     val util = batchTestUtil()
 
     val logicalRuleSet = FlinkRuleSets.LOGICAL_OPT_RULES.filter {
-        case CalcMergeRule.INSTANCE => false
-        case FilterCalcMergeRule.INSTANCE => false
-        case ProjectCalcMergeRule.INSTANCE => false
+        case CoreRules.CALC_MERGE => false
+        case CoreRules.FILTER_CALC_MERGE => false
+        case CoreRules.PROJECT_CALC_MERGE => false
         case _ => true
       }
 
-    val cc: CalciteConfig = new CalciteConfigBuilder()
+    val cc: PlannerConfig = new CalciteConfigBuilder()
       .replaceLogicalOptRuleSet(RuleSets.ofList(logicalRuleSet.toList))
       .build()
 
-    util.tableEnv.getConfig.setCalciteConfig(cc)
+    util.tableEnv.getConfig.setPlannerConfig(cc)
 
     val sourceTable = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     val function = util.addFunction("func1", new TableFunc0)
@@ -195,7 +196,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(sourceTable),
         term("invocation", s"${function.functionIdentifier}($$2)"),
         term("correlate", s"table(${function.getClass.getSimpleName}(c))"),
         term("select", "a", "b", "c", "d", "e"),

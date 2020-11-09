@@ -24,9 +24,11 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.HeartbeatManagerOptions;
 import org.apache.flink.configuration.HighAvailabilityOptions;
 import org.apache.flink.configuration.JobManagerOptions;
+import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.configuration.TaskManagerOptions;
-import org.apache.flink.runtime.clusterframework.types.ResourceID;
+import org.apache.flink.core.plugin.PluginManager;
+import org.apache.flink.core.plugin.PluginUtils;
 import org.apache.flink.runtime.entrypoint.StandaloneSessionClusterEntrypoint;
 import org.apache.flink.runtime.taskexecutor.TaskManagerRunner;
 import org.apache.flink.runtime.util.BlobServerResource;
@@ -41,9 +43,12 @@ import org.junit.rules.TemporaryFolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.flink.runtime.testutils.CommonTestUtils.getJavaCommandPath;
@@ -67,7 +72,6 @@ public abstract class AbstractTaskManagerProcessFailureRecoveryTest extends Test
 
 	protected static final String READY_MARKER_FILE_PREFIX = "ready_";
 	protected static final String PROCEED_MARKER_FILE = "proceed";
-	protected static final String FINISH_MARKER_FILE_PREFIX = "finish_";
 
 	protected static final int PARALLELISM = 4;
 
@@ -99,8 +103,12 @@ public abstract class AbstractTaskManagerProcessFailureRecoveryTest extends Test
 		config.setString(HighAvailabilityOptions.HA_ZOOKEEPER_QUORUM, zooKeeperResource.getConnectString());
 		config.setString(HighAvailabilityOptions.HA_STORAGE_PATH, temporaryFolder.newFolder().getAbsolutePath());
 		config.setInteger(TaskManagerOptions.NUM_TASK_SLOTS, 2);
-		config.setString(TaskManagerOptions.MANAGED_MEMORY_SIZE, "4m");
-		config.setInteger(TaskManagerOptions.NETWORK_NUM_BUFFERS, 100);
+		config.set(TaskManagerOptions.MANAGED_MEMORY_SIZE, MemorySize.parse("4m"));
+		config.set(TaskManagerOptions.NETWORK_MEMORY_MIN, MemorySize.parse("3200k"));
+		config.set(TaskManagerOptions.NETWORK_MEMORY_MAX, MemorySize.parse("3200k"));
+		config.set(TaskManagerOptions.TASK_HEAP_MEMORY, MemorySize.parse("128m"));
+		config.set(TaskManagerOptions.CPU_CORES, 1.0);
+		config.setString(JobManagerOptions.EXECUTION_FAILOVER_STRATEGY, "full");
 
 		try (final StandaloneSessionClusterEntrypoint clusterEntrypoint = new StandaloneSessionClusterEntrypoint(config)) {
 
@@ -169,7 +177,7 @@ public abstract class AbstractTaskManagerProcessFailureRecoveryTest extends Test
 
 			// kill one of the previous TaskManagers, triggering a failure and recovery
 			taskManagerProcess1.destroy();
-			taskManagerProcess1 = null;
+			waitForShutdown("TaskManager 1", taskManagerProcess1);
 
 			// we create the marker file which signals the program functions tasks that they can complete
 			touchFile(new File(coordinateTempDir, PROCEED_MARKER_FILE));
@@ -191,16 +199,16 @@ public abstract class AbstractTaskManagerProcessFailureRecoveryTest extends Test
 		}
 		catch (Exception e) {
 			e.printStackTrace();
-			printProcessLog("TaskManager 1", taskManagerProcess1.getOutput().toString());
-			printProcessLog("TaskManager 2", taskManagerProcess1.getOutput().toString());
-			printProcessLog("TaskManager 3", taskManagerProcess1.getOutput().toString());
+			printProcessLog("TaskManager 1", taskManagerProcess1);
+			printProcessLog("TaskManager 2", taskManagerProcess2);
+			printProcessLog("TaskManager 3", taskManagerProcess3);
 			fail(e.getMessage());
 		}
 		catch (Error e) {
 			e.printStackTrace();
-			printProcessLog("TaskManager 1", taskManagerProcess1.getOutput().toString());
-			printProcessLog("TaskManager 2", taskManagerProcess1.getOutput().toString());
-			printProcessLog("TaskManager 3", taskManagerProcess1.getOutput().toString());
+			printProcessLog("TaskManager 1", taskManagerProcess1);
+			printProcessLog("TaskManager 2", taskManagerProcess2);
+			printProcessLog("TaskManager 3", taskManagerProcess3);
 			throw e;
 		}
 		finally {
@@ -213,6 +221,22 @@ public abstract class AbstractTaskManagerProcessFailureRecoveryTest extends Test
 			if (taskManagerProcess3 != null) {
 				taskManagerProcess3.destroy();
 			}
+
+			waitForShutdown("TaskManager 1", taskManagerProcess1);
+			waitForShutdown("TaskManager 2", taskManagerProcess2);
+			waitForShutdown("TaskManager 3", taskManagerProcess3);
+		}
+	}
+
+	private void waitForShutdown(final String processName, @Nullable final TestProcess process) throws InterruptedException {
+		if (process == null) {
+			return;
+		}
+
+		if (!process.getProcess().waitFor(30, TimeUnit.SECONDS)) {
+			log.error("{} did not shutdown in time.", processName);
+			printProcessLog(processName, process);
+			process.getProcess().destroyForcibly();
 		}
 	}
 
@@ -226,18 +250,20 @@ public abstract class AbstractTaskManagerProcessFailureRecoveryTest extends Test
 	 */
 	public abstract void testTaskManagerFailure(Configuration configuration, File coordinateDir) throws Exception;
 
-	protected static void printProcessLog(String processName, String log) {
-		if (log == null || log.length() == 0) {
-			return;
+	protected static void printProcessLog(String processName, TestProcess process) {
+		if (process == null) {
+			System.out.println("-----------------------------------------");
+			System.out.println(" PROCESS " + processName + " WAS NOT STARTED.");
+			System.out.println("-----------------------------------------");
+		} else {
+			System.out.println("-----------------------------------------");
+			System.out.println(" BEGIN SPAWNED PROCESS LOG FOR " + processName);
+			System.out.println("-----------------------------------------");
+			System.out.println(process.getErrorOutput().toString());
+			System.out.println("-----------------------------------------");
+			System.out.println("		END SPAWNED PROCESS LOG");
+			System.out.println("-----------------------------------------");
 		}
-
-		System.out.println("-----------------------------------------");
-		System.out.println(" BEGIN SPAWNED PROCESS LOG FOR " + processName);
-		System.out.println("-----------------------------------------");
-		System.out.println(log);
-		System.out.println("-----------------------------------------");
-		System.out.println("		END SPAWNED PROCESS LOG");
-		System.out.println("-----------------------------------------");
 	}
 
 	protected static void touchFile(File file) throws IOException {
@@ -296,8 +322,9 @@ public abstract class AbstractTaskManagerProcessFailureRecoveryTest extends Test
 			try {
 				final ParameterTool parameterTool = ParameterTool.fromArgs(args);
 				Configuration cfg = parameterTool.getConfiguration();
+				final PluginManager pluginManager = PluginUtils.createPluginManagerFromRootFolder(cfg);
 
-				TaskManagerRunner.runTaskManager(cfg, ResourceID.generate());
+				TaskManagerRunner.runTaskManager(cfg, pluginManager);
 			}
 			catch (Throwable t) {
 				LOG.error("Failed to start TaskManager process", t);

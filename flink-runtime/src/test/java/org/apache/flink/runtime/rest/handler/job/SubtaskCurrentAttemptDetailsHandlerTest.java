@@ -32,7 +32,7 @@ import org.apache.flink.runtime.executiongraph.IOMetrics;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.rest.handler.HandlerRequest;
 import org.apache.flink.runtime.rest.handler.RestHandlerConfiguration;
-import org.apache.flink.runtime.rest.handler.legacy.ExecutionGraphCache;
+import org.apache.flink.runtime.rest.handler.legacy.DefaultExecutionGraphCache;
 import org.apache.flink.runtime.rest.handler.legacy.metrics.MetricFetcher;
 import org.apache.flink.runtime.rest.handler.legacy.metrics.MetricFetcherImpl;
 import org.apache.flink.runtime.rest.messages.EmptyRequestBody;
@@ -70,23 +70,16 @@ public class SubtaskCurrentAttemptDetailsHandlerTest extends TestLogger {
 		final long deployingTs = System.currentTimeMillis() - 1024;
 		final long finishedTs = System.currentTimeMillis();
 
-		final long bytesInLocal = 1L;
-		final long bytesInRemote = 2L;
+		final long bytesIn = 1L;
 		final long bytesOut = 10L;
 		final long recordsIn = 20L;
 		final long recordsOut = 30L;
 
 		final IOMetrics ioMetrics = new IOMetrics(
-			bytesInLocal,
-			bytesInRemote,
+			bytesIn,
 			bytesOut,
 			recordsIn,
-			recordsOut,
-			0.0,
-			0.0,
-			0.0,
-			0.0,
-			0.0);
+			recordsOut);
 
 		final long[] timestamps = new long[ExecutionState.values().length];
 		timestamps[ExecutionState.DEPLOYING.ordinal()] = deployingTs;
@@ -122,7 +115,7 @@ public class SubtaskCurrentAttemptDetailsHandlerTest extends TestLogger {
 
 		final MetricFetcher metricFetcher = new MetricFetcherImpl<>(
 			() -> null,
-			path -> null,
+			address -> null,
 			TestingUtils.defaultExecutor(),
 			Time.milliseconds(1000L),
 			MetricOptions.METRIC_FETCHER_UPDATE_INTERVAL.defaultValue());
@@ -132,7 +125,7 @@ public class SubtaskCurrentAttemptDetailsHandlerTest extends TestLogger {
 			Time.milliseconds(100),
 			Collections.emptyMap(),
 			SubtaskCurrentAttemptDetailsHeaders.getInstance(),
-			new ExecutionGraphCache(
+			new DefaultExecutionGraphCache(
 				restHandlerConfiguration.getTimeout(),
 				Time.milliseconds(restHandlerConfiguration.getRefreshInterval())),
 			TestingUtils.defaultExecutor(),
@@ -153,7 +146,7 @@ public class SubtaskCurrentAttemptDetailsHandlerTest extends TestLogger {
 
 		// Verify
 		final IOMetricsInfo ioMetricsInfo = new IOMetricsInfo(
-			bytesInLocal + bytesInRemote,
+			bytesIn,
 			true,
 			bytesOut,
 			true,
@@ -171,7 +164,8 @@ public class SubtaskCurrentAttemptDetailsHandlerTest extends TestLogger {
 			deployingTs,
 			finishedTs,
 			finishedTs - deployingTs,
-			ioMetricsInfo
+			ioMetricsInfo,
+			assignedResourceLocation.getResourceID().getResourceIdString()
 		);
 
 		assertEquals(expectedDetailsInfo, detailsInfo);

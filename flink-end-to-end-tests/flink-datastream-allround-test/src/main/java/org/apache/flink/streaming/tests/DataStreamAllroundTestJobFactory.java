@@ -36,7 +36,6 @@ import org.apache.flink.contrib.streaming.state.RocksDBStateBackend;
 import org.apache.flink.runtime.state.StateBackend;
 import org.apache.flink.runtime.state.filesystem.FsStateBackend;
 import org.apache.flink.streaming.api.CheckpointingMode;
-import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.WindowedStream;
@@ -45,6 +44,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
 import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.tests.artificialstate.ArtificalOperatorStateMapper;
@@ -53,6 +53,7 @@ import org.apache.flink.streaming.tests.artificialstate.builder.ArtificialListSt
 import org.apache.flink.streaming.tests.artificialstate.builder.ArtificialStateBuilder;
 import org.apache.flink.streaming.tests.artificialstate.builder.ArtificialValueStateBuilder;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -80,6 +81,7 @@ import static org.apache.flink.streaming.tests.TestOperatorEnum.RESULT_TYPE_QUER
  *     <li>environment.checkpoint_interval (long, default - 1000): the checkpoint interval.</li>
  *     <li>environment.externalize_checkpoint (boolean, default - false): whether or not checkpoints should be externalized.</li>
  *     <li>environment.externalize_checkpoint.cleanup (String, default - 'retain'): Configures the cleanup mode for externalized checkpoints. Can be 'retain' or 'delete'.</li>
+ *     <li>environment.tolerable_checkpoint_failure_number (int, default - 0): Sets the expected behaviour for the job manager in case that it received declined checkpoints from tasks.</li>
  *     <li>environment.parallelism (int, default - 1): parallelism to use for the job.</li>
  *     <li>environment.max_parallelism (int, default - 128): max parallelism to use for the job</li>
  *     <li>environment.restart_strategy (String, default - 'fixed_delay'): The failure restart strategy to use. Can be 'fixed_delay' or 'no_restart'.</li>
@@ -140,6 +142,18 @@ public class DataStreamAllroundTestJobFactory {
 		.key("environment.checkpoint_interval")
 		.defaultValue(1000L);
 
+	private static final ConfigOption<Boolean> ENVIRONMENT_EXTERNALIZE_CHECKPOINT = ConfigOptions
+		.key("environment.externalize_checkpoint")
+		.defaultValue(false);
+
+	private static final ConfigOption<String> ENVIRONMENT_EXTERNALIZE_CHECKPOINT_CLEANUP = ConfigOptions
+		.key("environment.externalize_checkpoint.cleanup")
+		.defaultValue("retain");
+
+	private static final ConfigOption<Integer> ENVIRONMENT_TOLERABLE_DECLINED_CHECKPOINT_NUMBER = ConfigOptions
+		.key("environment.tolerable_declined_checkpoint_number ")
+		.defaultValue(0);
+
 	private static final ConfigOption<Integer> ENVIRONMENT_PARALLELISM = ConfigOptions
 		.key("environment.parallelism")
 		.defaultValue(1);
@@ -159,14 +173,6 @@ public class DataStreamAllroundTestJobFactory {
 	private static final ConfigOption<Long> ENVIRONMENT_RESTART_STRATEGY_FIXED_DELAY = ConfigOptions
 		.key("environment.restart_strategy.fixed.delay")
 		.defaultValue(0L);
-
-	private static final ConfigOption<Boolean> ENVIRONMENT_EXTERNALIZE_CHECKPOINT = ConfigOptions
-		.key("environment.externalize_checkpoint")
-		.defaultValue(false);
-
-	private static final ConfigOption<String> ENVIRONMENT_EXTERNALIZE_CHECKPOINT_CLEANUP = ConfigOptions
-		.key("environment.externalize_checkpoint.cleanup")
-		.defaultValue("retain");
 
 	private static final ConfigOption<String> STATE_BACKEND = ConfigOptions
 		.key("state_backend")
@@ -225,8 +231,16 @@ public class DataStreamAllroundTestJobFactory {
 		.defaultValue(250L);
 
 	public static void setupEnvironment(StreamExecutionEnvironment env, ParameterTool pt) throws Exception {
+		setupCheckpointing(env, pt);
+		setupParallelism(env, pt);
+		setupRestartStrategy(env, pt);
+		setupStateBackend(env, pt);
 
-		// set checkpointing semantics
+		// make parameters available in the web interface
+		env.getConfig().setGlobalJobParameters(pt);
+	}
+
+	private static void setupCheckpointing(final StreamExecutionEnvironment env, final ParameterTool pt) {
 		String semantics = pt.get(TEST_SEMANTICS.key(), TEST_SEMANTICS.defaultValue());
 		long checkpointInterval = pt.getLong(ENVIRONMENT_CHECKPOINT_INTERVAL.key(), ENVIRONMENT_CHECKPOINT_INTERVAL.defaultValue());
 		CheckpointingMode checkpointingMode = semantics.equalsIgnoreCase("exactly-once")
@@ -234,59 +248,6 @@ public class DataStreamAllroundTestJobFactory {
 			: CheckpointingMode.AT_LEAST_ONCE;
 
 		env.enableCheckpointing(checkpointInterval, checkpointingMode);
-
-		// use event time
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
-
-		// parallelism
-		env.setParallelism(pt.getInt(ENVIRONMENT_PARALLELISM.key(), ENVIRONMENT_PARALLELISM.defaultValue()));
-		env.setMaxParallelism(pt.getInt(ENVIRONMENT_MAX_PARALLELISM.key(), ENVIRONMENT_MAX_PARALLELISM.defaultValue()));
-
-		// restart strategy
-		String restartStrategyConfig = pt.get(ENVIRONMENT_RESTART_STRATEGY.key());
-		if (restartStrategyConfig != null) {
-			RestartStrategies.RestartStrategyConfiguration restartStrategy;
-			switch (restartStrategyConfig) {
-				case "fixed_delay":
-					restartStrategy = RestartStrategies.fixedDelayRestart(
-						pt.getInt(
-							ENVIRONMENT_RESTART_STRATEGY_FIXED_ATTEMPTS.key(),
-							ENVIRONMENT_RESTART_STRATEGY_FIXED_ATTEMPTS.defaultValue()),
-						pt.getLong(
-							ENVIRONMENT_RESTART_STRATEGY_FIXED_DELAY.key(),
-							ENVIRONMENT_RESTART_STRATEGY_FIXED_DELAY.defaultValue()));
-					break;
-				case "no_restart":
-					restartStrategy = RestartStrategies.noRestart();
-					break;
-				default:
-					throw new IllegalArgumentException("Unkown restart strategy: " + restartStrategyConfig);
-			}
-			env.setRestartStrategy(restartStrategy);
-		}
-
-		// state backend
-		final String stateBackend = pt.get(
-			STATE_BACKEND.key(),
-			STATE_BACKEND.defaultValue());
-
-		final String checkpointDir = pt.getRequired(STATE_BACKEND_CHECKPOINT_DIR.key());
-
-		if ("file".equalsIgnoreCase(stateBackend)) {
-			boolean asyncCheckpoints = pt.getBoolean(
-				STATE_BACKEND_FILE_ASYNC.key(),
-				STATE_BACKEND_FILE_ASYNC.defaultValue());
-
-			env.setStateBackend((StateBackend) new FsStateBackend(checkpointDir, asyncCheckpoints));
-		} else if ("rocks".equalsIgnoreCase(stateBackend)) {
-			boolean incrementalCheckpoints = pt.getBoolean(
-				STATE_BACKEND_ROCKS_INCREMENTAL.key(),
-				STATE_BACKEND_ROCKS_INCREMENTAL.defaultValue());
-
-			env.setStateBackend((StateBackend) new RocksDBStateBackend(checkpointDir, incrementalCheckpoints));
-		} else {
-			throw new IllegalArgumentException("Unknown backend requested: " + stateBackend);
-		}
 
 		boolean enableExternalizedCheckpoints = pt.getBoolean(
 			ENVIRONMENT_EXTERNALIZE_CHECKPOINT.key(),
@@ -308,12 +269,66 @@ public class DataStreamAllroundTestJobFactory {
 				default:
 					throw new IllegalArgumentException("Unknown clean up mode for externalized checkpoints: " + cleanupModeConfig);
 			}
-
 			env.getCheckpointConfig().enableExternalizedCheckpoints(cleanupMode);
-		}
 
-		// make parameters available in the web interface
-		env.getConfig().setGlobalJobParameters(pt);
+			final int tolerableDeclinedCheckpointNumber = pt.getInt(
+				ENVIRONMENT_TOLERABLE_DECLINED_CHECKPOINT_NUMBER.key(),
+				ENVIRONMENT_TOLERABLE_DECLINED_CHECKPOINT_NUMBER.defaultValue());
+			env.getCheckpointConfig().setTolerableCheckpointFailureNumber(tolerableDeclinedCheckpointNumber);
+		}
+	}
+
+	private static void setupParallelism(final StreamExecutionEnvironment env, final ParameterTool pt) {
+		env.setParallelism(pt.getInt(ENVIRONMENT_PARALLELISM.key(), ENVIRONMENT_PARALLELISM.defaultValue()));
+		env.setMaxParallelism(pt.getInt(ENVIRONMENT_MAX_PARALLELISM.key(), ENVIRONMENT_MAX_PARALLELISM.defaultValue()));
+	}
+
+	private static void setupRestartStrategy(final StreamExecutionEnvironment env, final ParameterTool pt) {
+		String restartStrategyConfig = pt.get(ENVIRONMENT_RESTART_STRATEGY.key());
+		if (restartStrategyConfig != null) {
+			RestartStrategies.RestartStrategyConfiguration restartStrategy;
+			switch (restartStrategyConfig) {
+				case "fixed_delay":
+					restartStrategy = RestartStrategies.fixedDelayRestart(
+						pt.getInt(
+							ENVIRONMENT_RESTART_STRATEGY_FIXED_ATTEMPTS.key(),
+							ENVIRONMENT_RESTART_STRATEGY_FIXED_ATTEMPTS.defaultValue()),
+						pt.getLong(
+							ENVIRONMENT_RESTART_STRATEGY_FIXED_DELAY.key(),
+							ENVIRONMENT_RESTART_STRATEGY_FIXED_DELAY.defaultValue()));
+					break;
+				case "no_restart":
+					restartStrategy = RestartStrategies.noRestart();
+					break;
+				default:
+					throw new IllegalArgumentException("Unknown restart strategy: " + restartStrategyConfig);
+			}
+			env.setRestartStrategy(restartStrategy);
+		}
+	}
+
+	private static void setupStateBackend(final StreamExecutionEnvironment env, final ParameterTool pt) throws IOException {
+		final String stateBackend = pt.get(
+			STATE_BACKEND.key(),
+			STATE_BACKEND.defaultValue());
+
+		final String checkpointDir = pt.getRequired(STATE_BACKEND_CHECKPOINT_DIR.key());
+
+		if ("file".equalsIgnoreCase(stateBackend)) {
+			boolean asyncCheckpoints = pt.getBoolean(
+				STATE_BACKEND_FILE_ASYNC.key(),
+				STATE_BACKEND_FILE_ASYNC.defaultValue());
+
+			env.setStateBackend((StateBackend) new FsStateBackend(checkpointDir, asyncCheckpoints));
+		} else if ("rocks".equalsIgnoreCase(stateBackend)) {
+			boolean incrementalCheckpoints = pt.getBoolean(
+				STATE_BACKEND_ROCKS_INCREMENTAL.key(),
+				STATE_BACKEND_ROCKS_INCREMENTAL.defaultValue());
+
+			env.setStateBackend((StateBackend) new RocksDBStateBackend(checkpointDir, incrementalCheckpoints));
+		} else {
+			throw new IllegalArgumentException("Unknown backend requested: " + stateBackend);
+		}
 	}
 
 	static SourceFunction<Event> createEventSource(ParameterTool pt) {
@@ -361,14 +376,15 @@ public class DataStreamAllroundTestJobFactory {
 			SEQUENCE_GENERATOR_SRC_EVENT_TIME_CLOCK_PROGRESS.key(),
 			SEQUENCE_GENERATOR_SRC_EVENT_TIME_CLOCK_PROGRESS.defaultValue());
 
-		return keyedStream.timeWindow(
-			Time.milliseconds(
-				pt.getLong(
-					TUMBLING_WINDOW_OPERATOR_NUM_EVENTS.key(),
-					TUMBLING_WINDOW_OPERATOR_NUM_EVENTS.defaultValue()
-				) * eventTimeProgressPerEvent
-			)
-		);
+		return keyedStream.window(
+				TumblingEventTimeWindows.of(
+						Time.milliseconds(
+								pt.getLong(
+										TUMBLING_WINDOW_OPERATOR_NUM_EVENTS.key(),
+										TUMBLING_WINDOW_OPERATOR_NUM_EVENTS.defaultValue()
+								) * eventTimeProgressPerEvent
+						)
+				));
 	}
 
 	static FlatMapFunction<Event, String> createSemanticsCheckMapper(ParameterTool pt) {

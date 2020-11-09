@@ -29,7 +29,7 @@ Flink exposes a metric system that allows gathering and exposing metrics to exte
 
 ## Registering metrics
 
-You can access the metric system from any user function that extends [RichFunction]({{ site.baseurl }}/dev/api_concepts.html#rich-functions) by calling `getRuntimeContext().getMetricGroup()`.
+You can access the metric system from any user function that extends [RichFunction]({% link dev/user_defined_functions.md %}#rich-functions) by calling `getRuntimeContext().getMetricGroup()`.
 This method returns a `MetricGroup` object on which you can create and register new metrics.
 
 ### Metric types
@@ -404,7 +404,7 @@ class MyMapper extends RichMapFunction[Long,Long] {
   @transient private var meter: Meter = _
 
   override def open(config: Configuration): Unit = {
-    com.codahale.metrics.Meter dropwizardMeter = new com.codahale.metrics.Meter()
+    val dropwizardMeter: com.codahale.metrics.Meter = new com.codahale.metrics.Meter()
   
     meter = getRuntimeContext()
       .getMetricGroup()
@@ -433,7 +433,7 @@ You can configure which delimiter to use for the identifier (default: `.`) by se
 
 ### User Scope
 
-You can define a user scope by calling `MetricGroup#addGroup(String name)`, `MetricGroup#addGroup(int name)` or `Metric#addGroup(String key, String value)`.
+You can define a user scope by calling `MetricGroup#addGroup(String name)`, `MetricGroup#addGroup(int name)` or `MetricGroup#addGroup(String key, String value)`.
 These methods affect what `MetricGroup#getMetricIdentifier` and `MetricGroup#getScopeComponents` return.
 
 <div class="codetabs" markdown="1">
@@ -560,20 +560,24 @@ reporters will be instantiated on each job and task manager when they are starte
 
 - `metrics.reporter.<name>.<config>`: Generic setting `<config>` for the reporter named `<name>`.
 - `metrics.reporter.<name>.class`: The reporter class to use for the reporter named `<name>`.
+- `metrics.reporter.<name>.factory.class`: The reporter factory class to use for the reporter named `<name>`.
 - `metrics.reporter.<name>.interval`: The reporter interval to use for the reporter named `<name>`.
 - `metrics.reporter.<name>.scope.delimiter`: The delimiter to use for the identifier (default value use `metrics.scope.delimiter`) for the reporter named `<name>`.
+- `metrics.reporter.<name>.scope.variables.excludes`: (optional) A semi-colon (;) separate list of variables that should be ignored by tag-based reporters (e.g., Prometheus, InfluxDB). 
 - `metrics.reporters`: (optional) A comma-separated include list of reporter names. By default all configured reporters will be used.
 
-All reporters must at least have the `class` property, some allow specifying a reporting `interval`. Below,
-we will list more settings specific to each reporter.
+All reporters must at least have either the `class` or `factory.class` property. Which property may/should be used depends on the reporter implementation. See the individual reporter configuration sections for more information.
+Some reporters (referred to as `Scheduled`) allow specifying a reporting `interval`.
+Below more settings specific to each reporter will be listed.
 
 Example reporter configuration that specifies multiple reporters:
 
 {% highlight yaml %}
 metrics.reporters: my_jmx_reporter,my_other_reporter
 
-metrics.reporter.my_jmx_reporter.class: org.apache.flink.metrics.jmx.JMXReporter
+metrics.reporter.my_jmx_reporter.factory.class: org.apache.flink.metrics.jmx.JMXReporterFactory
 metrics.reporter.my_jmx_reporter.port: 9020-9040
+metrics.reporter.my_jmx_reporter.scope.variables.excludes:job_id;task_attempt_num
 
 metrics.reporter.my_other_reporter.class: org.apache.flink.metrics.graphite.GraphiteReporter
 metrics.reporter.my_other_reporter.host: 192.168.1.1
@@ -581,10 +585,14 @@ metrics.reporter.my_other_reporter.port: 10000
 
 {% endhighlight %}
 
-**Important:** The jar containing the reporter must be accessible when Flink is started by placing it in the /lib folder.
+**Important:** The jar containing the reporter must be accessible when Flink is started. Reporters that support the
+ `factory.class` property can be loaded as [plugins]({% link ops/plugins.md %}). Otherwise the jar must be placed
+ in the /lib folder. Reporters that are shipped with Flink (i.e., all reporters documented on this page) are available
+ by default.
 
 You can write your own `Reporter` by implementing the `org.apache.flink.metrics.reporter.MetricReporter` interface.
 If the Reporter should send out reports regularly you have to implement the `Scheduled` interface as well.
+By additionally implementing a `MetricReporterFactory` your reporter can also be loaded as a plugin.
 
 The following sections list the supported reporters.
 
@@ -605,7 +613,7 @@ Example configuration:
 
 {% highlight yaml %}
 
-metrics.reporter.jmx.class: org.apache.flink.metrics.jmx.JMXReporter
+metrics.reporter.jmx.factory.class: org.apache.flink.metrics.jmx.JMXReporterFactory
 metrics.reporter.jmx.port: 8789
 
 {% endhighlight %}
@@ -624,9 +632,6 @@ The domain thus identifies a metric class, while the key-property list identifie
 
 ### Graphite (org.apache.flink.metrics.graphite.GraphiteReporter)
 
-In order to use this reporter you must copy `/opt/flink-metrics-graphite-{{site.version}}.jar` into the `/lib` folder
-of your Flink distribution.
-
 Parameters:
 
 - `host` - the Graphite server host
@@ -637,46 +642,46 @@ Example configuration:
 
 {% highlight yaml %}
 
-metrics.reporter.grph.class: org.apache.flink.metrics.graphite.GraphiteReporter
+metrics.reporter.grph.factory.class: org.apache.flink.metrics.graphite.GraphiteReporterFactory
 metrics.reporter.grph.host: localhost
 metrics.reporter.grph.port: 2003
 metrics.reporter.grph.protocol: TCP
+metrics.reporter.grph.interval: 60 SECONDS
 
 {% endhighlight %}
 
 ### InfluxDB (org.apache.flink.metrics.influxdb.InfluxdbReporter)
 
-In order to use this reporter you must copy `/opt/flink-metrics-influxdb-{{site.version}}.jar` into the `/lib` folder
+In order to use this reporter you must copy `/opt/flink-metrics-influxdb-{{site.version}}.jar` into the `plugins/influxdb` folder
 of your Flink distribution.
 
 Parameters:
 
-- `host` - the InfluxDB server host
-- `port` - (optional) the InfluxDB server port, defaults to `8086`
-- `db` - the InfluxDB database to store metrics
-- `username` - (optional) InfluxDB username used for authentication
-- `password` - (optional) InfluxDB username's password used for authentication
+{% include generated/influxdb_reporter_configuration.html %}
 
 Example configuration:
 
 {% highlight yaml %}
 
-metrics.reporter.influxdb.class: org.apache.flink.metrics.influxdb.InfluxdbReporter
+metrics.reporter.influxdb.factory.class: org.apache.flink.metrics.influxdb.InfluxdbReporterFactory
+metrics.reporter.influxdb.scheme: http
 metrics.reporter.influxdb.host: localhost
 metrics.reporter.influxdb.port: 8086
 metrics.reporter.influxdb.db: flink
 metrics.reporter.influxdb.username: flink-metrics
 metrics.reporter.influxdb.password: qwerty
+metrics.reporter.influxdb.retentionPolicy: one_hour
+metrics.reporter.influxdb.consistency: ANY
+metrics.reporter.influxdb.connectTimeout: 60000
+metrics.reporter.influxdb.writeTimeout: 60000
+metrics.reporter.influxdb.interval: 60 SECONDS
 
 {% endhighlight %}
 
-The reporter would send metrics using http protocol with default retention policy defined on InfluxDB server.
+The reporter would send metrics using http protocol to the InfluxDB server with the specified retention policy (or the default policy specified on the server).
 All Flink metrics variables (see [List of all Variables](#list-of-all-variables)) are exported as InfluxDB tags.
 
 ### Prometheus (org.apache.flink.metrics.prometheus.PrometheusReporter)
-
-In order to use this reporter you must copy `/opt/flink-metrics-prometheus{{site.scala_version_suffix}}-{{site.version}}.jar` into the `/lib` folder
-of your Flink distribution.
 
 Parameters:
 
@@ -704,9 +709,6 @@ All Flink metrics variables (see [List of all Variables](#list-of-all-variables)
 
 ### PrometheusPushGateway (org.apache.flink.metrics.prometheus.PrometheusPushGatewayReporter)
 
-In order to use this reporter you must copy `/opt/flink-metrics-prometheus-{{site.version}}.jar` into the `/lib` folder
-of your Flink distribution.
-
 Parameters:
 
 {% include generated/prometheus_push_gateway_reporter_configuration.html %}
@@ -721,6 +723,8 @@ metrics.reporter.promgateway.port: 9091
 metrics.reporter.promgateway.jobName: myJob
 metrics.reporter.promgateway.randomJobNameSuffix: true
 metrics.reporter.promgateway.deleteOnShutdown: false
+metrics.reporter.promgateway.groupingKey: k1=v1;k2=v2
+metrics.reporter.promgateway.interval: 60 SECONDS
 
 {% endhighlight %}
 
@@ -729,9 +733,6 @@ The PrometheusPushGatewayReporter pushes metrics to a [Pushgateway](https://gith
 Please see the [Prometheus documentation](https://prometheus.io/docs/practices/pushing/) for use-cases.
 
 ### StatsD (org.apache.flink.metrics.statsd.StatsDReporter)
-
-In order to use this reporter you must copy `/opt/flink-metrics-statsd-{{site.version}}.jar` into the `/lib` folder
-of your Flink distribution.
 
 Parameters:
 
@@ -742,16 +743,14 @@ Example configuration:
 
 {% highlight yaml %}
 
-metrics.reporter.stsd.class: org.apache.flink.metrics.statsd.StatsDReporter
+metrics.reporter.stsd.factory.class: org.apache.flink.metrics.statsd.StatsDReporterFactory
 metrics.reporter.stsd.host: localhost
 metrics.reporter.stsd.port: 8125
+metrics.reporter.stsd.interval: 60 SECONDS
 
 {% endhighlight %}
 
 ### Datadog (org.apache.flink.metrics.datadog.DatadogHttpReporter)
-
-In order to use this reporter you must copy `/opt/flink-metrics-datadog-{{site.version}}.jar` into the `/lib` folder
-of your Flink distribution.
 
 Note any variables in Flink metrics, such as `<host>`, `<job_name>`, `<tm_id>`, `<subtask_index>`, `<task_name>`, and `<operator_name>`,
 will be sent to Datadog as tags. Tags will look like `host:localhost` and `job_name:myjobname`.
@@ -760,28 +759,34 @@ Parameters:
 
 - `apikey` - the Datadog API key
 - `tags` - (optional) the global tags that will be applied to metrics when sending to Datadog. Tags should be separated by comma only
+- `proxyHost` - (optional) The proxy host to use when sending to Datadog.
+- `proxyPort` - (optional) The proxy port to use when sending to Datadog, defaults to 8080.
+- `dataCenter` - (optional) The data center (`EU`/`US`) to connect to, defaults to `US`.
+- `maxMetricsPerRequest` - (optional) The maximum number of metrics to include in each request, defaults to 2000.
 
 Example configuration:
 
 {% highlight yaml %}
 
-metrics.reporter.dghttp.class: org.apache.flink.metrics.datadog.DatadogHttpReporter
+metrics.reporter.dghttp.factory.class: org.apache.flink.metrics.datadog.DatadogHttpReporterFactory
 metrics.reporter.dghttp.apikey: xxx
 metrics.reporter.dghttp.tags: myflinkapp,prod
+metrics.reporter.dghttp.proxyHost: my.web.proxy.com
+metrics.reporter.dghttp.proxyPort: 8080
+metrics.reporter.dghttp.dataCenter: US
+metrics.reporter.dghttp.maxMetricsPerRequest: 2000
+metrics.reporter.dghttp.interval: 60 SECONDS
 
 {% endhighlight %}
 
 
 ### Slf4j (org.apache.flink.metrics.slf4j.Slf4jReporter)
 
-In order to use this reporter you must copy `/opt/flink-metrics-slf4j-{{site.version}}.jar` into the `/lib` folder
-of your Flink distribution.
-
 Example configuration:
 
 {% highlight yaml %}
 
-metrics.reporter.slf4j.class: org.apache.flink.metrics.slf4j.Slf4jReporter
+metrics.reporter.slf4j.factory.class: org.apache.flink.metrics.slf4j.Slf4jReporterFactory
 metrics.reporter.slf4j.interval: 60 SECONDS
 
 {% endhighlight %}
@@ -842,6 +847,8 @@ Thus, in order to infer the metric identifier:
 </table>
 
 ### Memory
+The memory-related metrics require Oracle's memory management (also included in OpenJDK's Hotspot implementation) to be in place. 
+Some metrics might not be exposed when using other JVM implementations (e.g. IBM's J9).
 <table class="table table-bordered">                               
   <thead>                                                          
     <tr>                                                           
@@ -854,8 +861,8 @@ Thus, in order to infer the metric identifier:
   </thead>                                                         
   <tbody>                                                          
     <tr>                                                           
-      <th rowspan="12"><strong>Job-/TaskManager</strong></th>
-      <td rowspan="12">Status.JVM.Memory</td>
+      <th rowspan="17"><strong>Job-/TaskManager</strong></th>
+      <td rowspan="15">Status.JVM.Memory</td>
       <td>Heap.Used</td>
       <td>The amount of heap memory currently used (in bytes).</td>
       <td>Gauge</td>
@@ -867,7 +874,10 @@ Thus, in order to infer the metric identifier:
     </tr>
     <tr>
       <td>Heap.Max</td>
-      <td>The maximum amount of heap memory that can be used for memory management (in bytes).</td>
+      <td>The maximum amount of heap memory that can be used for memory management (in bytes). <br/>
+      This value might not be necessarily equal to the maximum value specified through -Xmx or 
+      the equivalent Flink configuration parameter. Some GC algorithms allocate heap memory that won't 
+      be available to the user code and, therefore, not being exposed through the heap metrics.</td>
       <td>Gauge</td>
     </tr>
     <tr>
@@ -883,6 +893,21 @@ Thus, in order to infer the metric identifier:
     <tr>
       <td>NonHeap.Max</td>
       <td>The maximum amount of non-heap memory that can be used for memory management (in bytes).</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>Metaspace.Used</td>
+      <td>The amount of memory currently used in the Metaspace memory pool (in bytes).</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>Metaspace.Committed</td>
+      <td>The amount of memory guaranteed to be available to the JVM in the Metaspace memory pool (in bytes).</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>Metaspace.Max</td>
+      <td>The maximum amount of memory that can be used in the Metaspace memory pool (in bytes).</td>
       <td>Gauge</td>
     </tr>
     <tr>
@@ -914,7 +939,18 @@ Thus, in order to infer the metric identifier:
       <td>Mapped.TotalCapacity</td>
       <td>The number of buffers in the mapped buffer pool (in bytes).</td>
       <td>Gauge</td>
-    </tr>                                                         
+    </tr>
+    <tr>
+      <td rowspan="2">Status.Flink.Memory</td>
+      <td>Managed.Used</td>
+      <td>The amount of managed memory currently used.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>Managed.Total</td>
+      <td>The total amount of managed memory.</td>
+      <td>Gauge</td>
+    </tr>
   </tbody>                                                         
 </table>
 
@@ -994,7 +1030,8 @@ Thus, in order to infer the metric identifier:
   </tbody>
 </table>
 
-### Network
+
+### Network (Deprecated: use [Default shuffle service metrics]({{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service))
 <table class="table table-bordered">
   <thead>
     <tr>
@@ -1019,10 +1056,10 @@ Thus, in order to infer the metric identifier:
       <td>Gauge</td>
     </tr>
     <tr>
-      <th rowspan="8">Task</th>
-      <td rowspan="4">buffers</td>
+      <th rowspan="10">Task</th>
+      <td rowspan="6">buffers</td>
       <td>inputQueueLength</td>
-      <td>The number of queued input buffers.</td>
+      <td>The number of queued input buffers. (ignores LocalInputChannels which are using blocking subpartitions)</td>
       <td>Gauge</td>
     </tr>
     <tr>
@@ -1032,16 +1069,26 @@ Thus, in order to infer the metric identifier:
     </tr>
     <tr>
       <td>inPoolUsage</td>
-      <td>An estimate of the input buffers usage.</td>
+      <td>An estimate of the input buffers usage. (ignores LocalInputChannels)</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>inputFloatingBuffersUsage</td>
+      <td>An estimate of the floating input buffers usage. (ignores LocalInputChannels)</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>inputExclusiveBuffersUsage</td>
+      <td>An estimate of the exclusive input buffers usage. (ignores LocalInputChannels)</td>
       <td>Gauge</td>
     </tr>
     <tr>
       <td>outPoolUsage</td>
       <td>An estimate of the output buffers usage.</td>
-      <td>Gauge</td>      
+      <td>Gauge</td>
     </tr>
     <tr>
-      <td rowspan="4">Network.&lt;Input|Output&gt;.&lt;gate&gt;<br />
+      <td rowspan="4">Network.&lt;Input|Output&gt;.&lt;gate|partition&gt;<br />
         <strong>(only available if <tt>taskmanager.net.detailed-metrics</tt> config option is set)</strong></td>
       <td>totalQueueLen</td>
       <td>Total number of queued buffers in all input/output channels.</td>
@@ -1061,6 +1108,143 @@ Thus, in order to infer the metric identifier:
       <td>avgQueueLen</td>
       <td>Average number of queued buffers in all input/output channels.</td>
       <td>Gauge</td>
+    </tr>
+  </tbody>
+</table>
+
+### Default shuffle service
+
+Metrics related to data exchange between task executors using netty network communication.
+
+<table class="table table-bordered">
+  <thead>
+    <tr>
+      <th class="text-left" style="width: 18%">Scope</th>
+      <th class="text-left" style="width: 22%">Infix</th>
+      <th class="text-left" style="width: 22%">Metrics</th>
+      <th class="text-left" style="width: 30%">Description</th>
+      <th class="text-left" style="width: 8%">Type</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th rowspan="6"><strong>TaskManager</strong></th>
+      <td rowspan="6">Status.Shuffle.Netty</td>
+      <td>AvailableMemorySegments</td>
+      <td>The number of unused memory segments.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>UsedMemorySegments</td>
+      <td>The number of used memory segments.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>TotalMemorySegments</td>
+      <td>The number of allocated memory segments.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>AvailableMemory</td>
+      <td>The amount of unused memory in bytes.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>UsedMemory</td>
+      <td>The amount of used memory in bytes.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>TotalMemory</td>
+      <td>The amount of allocated memory in bytes.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <th rowspan="8">Task</th>
+      <td rowspan="2">Shuffle.Netty.Input.Buffers</td>
+      <td>inputQueueLength</td>
+      <td>The number of queued input buffers.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>inPoolUsage</td>
+      <td>An estimate of the input buffers usage.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td rowspan="2">Shuffle.Netty.Output.Buffers</td>
+      <td>outputQueueLength</td>
+      <td>The number of queued output buffers.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>outPoolUsage</td>
+      <td>An estimate of the output buffers usage.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td rowspan="4">Shuffle.Netty.&lt;Input|Output&gt;.&lt;gate|partition&gt;<br />
+        <strong>(only available if <tt>taskmanager.net.detailed-metrics</tt> config option is set)</strong></td>
+      <td>totalQueueLen</td>
+      <td>Total number of queued buffers in all input/output channels.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>minQueueLen</td>
+      <td>Minimum number of queued buffers in all input/output channels.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>maxQueueLen</td>
+      <td>Maximum number of queued buffers in all input/output channels.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>avgQueueLen</td>
+      <td>Average number of queued buffers in all input/output channels.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <th rowspan="8"><strong>Task</strong></th>
+      <td rowspan="8">Shuffle.Netty.Input</td>
+      <td>numBytesInLocal</td>
+      <td>The total number of bytes this task has read from a local source.</td>
+      <td>Counter</td>
+    </tr>
+    <tr>
+      <td>numBytesInLocalPerSecond</td>
+      <td>The number of bytes this task reads from a local source per second.</td>
+      <td>Meter</td>
+    </tr>
+    <tr>
+      <td>numBytesInRemote</td>
+      <td>The total number of bytes this task has read from a remote source.</td>
+      <td>Counter</td>
+    </tr>
+    <tr>
+      <td>numBytesInRemotePerSecond</td>
+      <td>The number of bytes this task reads from a remote source per second.</td>
+      <td>Meter</td>
+    </tr>
+    <tr>
+      <td>numBuffersInLocal</td>
+      <td>The total number of network buffers this task has read from a local source.</td>
+      <td>Counter</td>
+    </tr>
+    <tr>
+      <td>numBuffersInLocalPerSecond</td>
+      <td>The number of network buffers this task reads from a local source per second.</td>
+      <td>Meter</td>
+    </tr>
+    <tr>
+      <td>numBuffersInRemote</td>
+      <td>The total number of network buffers this task has read from a remote source.</td>
+      <td>Counter</td>
+    </tr>
+    <tr>
+      <td>numBuffersInRemotePerSecond</td>
+      <td>The number of network buffers this task reads from a remote source per second.</td>
+      <td>Meter</td>
     </tr>
   </tbody>
 </table>
@@ -1112,7 +1296,7 @@ Thus, in order to infer the metric identifier:
   </thead>
   <tbody>
     <tr>
-      <th rowspan="4"><strong>Job (only available on JobManager)</strong></th>
+      <th rowspan="5"><strong>Job (only available on JobManager)</strong></th>
       <td>restartingTime</td>
       <td>The time it took to restart the job, or how long the current restart has been in progress (in milliseconds).</td>
       <td>Gauge</td>
@@ -1135,7 +1319,12 @@ Thus, in order to infer the metric identifier:
     </tr>
     <tr>
       <td>fullRestarts</td>
-      <td>The total number of full restarts since this job was submitted.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <b>numRestarts</b>.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>numRestarts</td>
+      <td>The total number of restarts since this job was submitted, including full restarts and fine-grained restarts.</td>
       <td>Gauge</td>
     </tr>
   </tbody>
@@ -1153,7 +1342,7 @@ Thus, in order to infer the metric identifier:
   </thead>
   <tbody>
     <tr>
-      <th rowspan="9"><strong>Job (only available on JobManager)</strong></th>
+      <th rowspan="8"><strong>Job (only available on JobManager)</strong></th>
       <td>lastCheckpointDuration</td>
       <td>The time it took to complete the last checkpoint (in milliseconds).</td>
       <td>Gauge</td>
@@ -1171,11 +1360,6 @@ Thus, in order to infer the metric identifier:
     <tr>
       <td>lastCheckpointRestoreTimestamp</td>
       <td>Timestamp when the last checkpoint was restored at the coordinator (in milliseconds).</td>
-      <td>Gauge</td>
-    </tr>
-    <tr>
-      <td>lastCheckpointAlignmentBuffered</td>
-      <td>The number of buffered bytes during alignment over all subtasks for the last checkpoint (in bytes).</td>
       <td>Gauge</td>
     </tr>
     <tr>
@@ -1199,9 +1383,14 @@ Thus, in order to infer the metric identifier:
       <td>Gauge</td>
     </tr>
     <tr>
-      <th rowspan="1">Task</th>
+      <th rowspan="2"><strong>Task</strong></th>
       <td>checkpointAlignmentTime</td>
-      <td>The time in nanoseconds that the last barrier alignment took to complete, or how long the current alignment has taken so far (in nanoseconds).</td>
+      <td>The time in nanoseconds that the last barrier alignment took to complete, or how long the current alignment has taken so far (in nanoseconds). This is the time between receiving first and the last checkpoint barrier. You can find more information in the [Monitoring State and Checkpoints section]({{ site.baseurl }}/ops/state/large_state_tuning.html#monitoring-state-and-checkpoints)</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>checkpointStartDelayNanos</td>
+      <td>The time in nanoseconds that elapsed between the creation of the last checkpoint and the time when the checkpointing process has started by this Task. This delay shows how long it takes for the first checkpoint barrier to reach the task. A high value indicates back-pressure. If only a specific task has a long start delay, the most likely reason is data skew.</td>
       <td>Gauge</td>
     </tr>
   </tbody>
@@ -1223,49 +1412,49 @@ Certain RocksDB native metrics are available but disabled by default, you can fi
   <tbody>
     <tr>
       <th rowspan="1"><strong>Job (only available on TaskManager)</strong></th>
-      <td>&lt;source_id&gt;.&lt;source_subtask_index&gt;.&lt;operator_id&gt;.&lt;operator_subtask_index&gt;.latency</td>
-      <td>The latency distributions from a given source subtask to an operator subtask (in milliseconds).</td>
+      <td>[&lt;source_id&gt;.[&lt;source_subtask_index&gt;.]]&lt;operator_id&gt;.&lt;operator_subtask_index&gt;.latency</td>
+      <td>The latency distributions from a given source (subtask) to an operator subtask (in milliseconds), depending on the <a href="{{ site.baseurl }}/ops/config.html#metrics-latency-granularity">latency granularity</a>.</td>
       <td>Histogram</td>
     </tr>
     <tr>
-      <th rowspan="12"><strong>Task</strong></th>
+      <th rowspan="14"><strong>Task</strong></th>
       <td>numBytesInLocal</td>
-      <td>The total number of bytes this task has read from a local source.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Counter</td>
     </tr>
     <tr>
       <td>numBytesInLocalPerSecond</td>
-      <td>The number of bytes this task reads from a local source per second.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Meter</td>
     </tr>
     <tr>
       <td>numBytesInRemote</td>
-      <td>The total number of bytes this task has read from a remote source.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Counter</td>
     </tr>
     <tr>
       <td>numBytesInRemotePerSecond</td>
-      <td>The number of bytes this task reads from a remote source per second.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Meter</td>
     </tr>
     <tr>
       <td>numBuffersInLocal</td>
-      <td>The total number of network buffers this task has read from a local source.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Counter</td>
     </tr>
     <tr>
       <td>numBuffersInLocalPerSecond</td>
-      <td>The number of network buffers this task reads from a local source per second.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Meter</td>
     </tr>
     <tr>
       <td>numBuffersInRemote</td>
-      <td>The total number of network buffers this task has read from a remote source.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Counter</td>
     </tr>
     <tr>
       <td>numBuffersInRemotePerSecond</td>
-      <td>The number of network buffers this task reads from a remote source per second.</td>
+      <td><span class="label label-danger">Attention:</span> deprecated, use <a href="{{ site.baseurl }}/monitoring/metrics.html#default-shuffle-service">Default shuffle service metrics</a>.</td>
       <td>Meter</td>
     </tr>
     <tr>
@@ -1286,6 +1475,16 @@ Certain RocksDB native metrics are available but disabled by default, you can fi
     <tr>
       <td>numBuffersOutPerSecond</td>
       <td>The number of network buffers this task emits per second.</td>
+      <td>Meter</td>
+    </tr>
+    <tr>
+      <td>isBackPressured</td>
+      <td>Whether the task is back-pressured.</td>
+      <td>Gauge</td>
+    </tr>
+    <tr>
+      <td>idleTimeMsPerSecond</td>
+      <td>The time (in milliseconds) this task is idle (either has no data to process or it is back pressured) per second.</td>
       <td>Meter</td>
     </tr>
     <tr>
@@ -1323,19 +1522,11 @@ Certain RocksDB native metrics are available but disabled by default, you can fi
       <td>Gauge</td>
     </tr>
     <tr>
-      <th rowspan="4"><strong>Operator</strong></th>
-      <td>currentInput1Watermark</td>
+      <th rowspan="3"><strong>Operator</strong></th>
+      <td>currentInput<strong>N</strong>Watermark</td>
       <td>
-        The last watermark this operator has received in its first input (in milliseconds).
-        <p><strong>Note:</strong> Only for operators with 2 inputs.</p>
-      </td>
-      <td>Gauge</td>
-    </tr>
-    <tr>
-      <td>currentInput2Watermark</td>
-      <td>
-        The last watermark this operator has received in its second input (in milliseconds).
-        <p><strong>Note:</strong> Only for operators with 2 inputs.</p>
+        The last watermark this operator has received in its <strong>N'th</strong> input (in milliseconds), with index <strong>N</strong> starting from 1. For example currentInput<strong>1</strong>Watermark, currentInput<strong>2</strong>Watermark, ...
+        <p><strong>Note:</strong> Only for operators with 2 or more inputs.</p>
       </td>
       <td>Gauge</td>
     </tr>
@@ -1643,7 +1834,7 @@ logged by `SystemResourcesMetricsInitializer` during the startup.
 
 ## Latency tracking
 
-Flink allows to track the latency of records traveling through the system. This feature is disabled by default.
+Flink allows to track the latency of records travelling through the system. This feature is disabled by default.
 To enable the latency tracking you must set the `latencyTrackingInterval` to a positive number in either the
 [Flink configuration]({{ site.baseurl }}/ops/config.html#metrics-latency-interval) or `ExecutionConfig`.
 
@@ -1659,7 +1850,7 @@ the markers will reflect that.
 
 The `LatencyMarker`s are used to derive a distribution of the latency between the sources of the topology and each 
 downstream operator. These distributions are reported as histogram metrics. The granularity of these distributions can 
-be controlled in the [Flink configuration]({{ site.baseurl }}/ops/config.html#metrics-latency-interval. For the highest 
+be controlled in the [Flink configuration]({{ site.baseurl }}/ops/config.html#metrics-latency-interval). For the highest 
 granularity `subtask` Flink will derive the latency distribution between every source subtask and every downstream 
 subtask, which results in quadratic (in the terms of the parallelism) number of histograms. 
 

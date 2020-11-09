@@ -137,17 +137,17 @@ Starting zookeeper daemon on host localhost.</pre>
    <pre>
 $ bin/start-cluster.sh
 Starting HA cluster with 2 masters and 1 peers in ZooKeeper quorum.
-Starting jobmanager daemon on host localhost.
-Starting jobmanager daemon on host localhost.
-Starting taskmanager daemon on host localhost.</pre>
+Starting standalonesession daemon on host localhost.
+Starting standalonesession daemon on host localhost.
+Starting taskexecutor daemon on host localhost.</pre>
 
 6. **Stop ZooKeeper quorum and cluster**:
 
    <pre>
 $ bin/stop-cluster.sh
-Stopping taskmanager daemon (pid: 7647) on localhost.
-Stopping jobmanager daemon (pid: 7495) on host localhost.
-Stopping jobmanager daemon (pid: 7349) on host localhost.
+Stopping taskexecutor daemon (pid: 7647) on localhost.
+Stopping standalonesession daemon (pid: 7495) on host localhost.
+Stopping standalonesession daemon (pid: 7349) on host localhost.
 $ bin/stop-zookeeper-quorum.sh
 Stopping zookeeper daemon (pid: 7101) on host localhost.</pre>
 
@@ -228,6 +228,15 @@ zookeeper.sasl.login-context-name: Client  # default is "Client". The value need
 
 For more information on Flink configuration for Kerberos security, please see [here]({{ site.baseurl}}/ops/config.html).
 You can also find [here]({{ site.baseurl}}/ops/security-kerberos.html) further details on how Flink internally setups Kerberos-based security.
+
+## Zookeeper Versions
+
+Flink ships with separate Zookeeper clients for 3.4 and 3.5, with 3.4 being in the `lib` directory of the distribution
+and thus used by default, whereas 3.5 is placed in the `opt` directory.
+
+The 3.5 client allows you to secure the Zookeeper connection via SSL, but _may_ not work with 3.4- Zookeeper installations.
+
+You can control which version is used by Flink by placing either jar in the `lib` directory.
 
 ## Bootstrap ZooKeeper
 

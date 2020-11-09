@@ -32,8 +32,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.rocksdb.ColumnFamilyHandle;
 
-import javax.annotation.Nullable;
-
 import java.math.BigInteger;
 import java.util.ArrayList;
 
@@ -171,11 +169,6 @@ public class RocksDBNativeMetricMonitorTest {
 		}
 
 		@Override
-		public char getDelimiter(int index) {
-			return 0;
-		}
-
-		@Override
 		public int getNumberReporters() {
 			return 0;
 		}
@@ -202,12 +195,6 @@ public class RocksDBNativeMetricMonitorTest {
 			config.setString(MetricOptions.SCOPE_NAMING_OPERATOR, "D");
 
 			return ScopeFormats.fromConfig(config);
-		}
-
-		@Nullable
-		@Override
-		public String getMetricQueryServicePath() {
-			return null;
 		}
 	}
 }

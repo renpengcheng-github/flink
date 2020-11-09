@@ -18,50 +18,44 @@
 
 package org.apache.flink.table.expressions
 
-import org.apache.flink.api.common.typeinfo.TypeInformation
-import org.apache.flink.api.java.typeutils.RowTypeInfo
-import org.apache.flink.table.expressions.utils.ExpressionTestBase
-import org.apache.flink.types.Row
-import org.junit.{Assert, Test}
+import ApiExpressionUtils.{unresolvedCall, lookupCall, unresolvedRef}
+import org.apache.flink.table.functions.BuiltInFunctionDefinitions
+import org.junit.Assert.assertEquals
+import org.junit.Test
 
 /**
   * Tests keyword as suffix.
   */
-class KeywordParseTest extends ExpressionTestBase {
+class KeywordParseTest {
 
   @Test
   def testKeyword(): Unit = {
-    Assert.assertEquals(
-      ExpressionParser.parseExpression("f0.asc"),
-      Asc(UnresolvedFieldReference("f0")))
-    Assert.assertEquals(
-      ExpressionParser.parseExpression("f0.asc()"),
-      Asc(UnresolvedFieldReference("f0")))
+    assertEquals(
+      unresolvedCall(BuiltInFunctionDefinitions.ORDER_ASC, unresolvedRef("f0")),
+      ExpressionParser.parseExpression("f0.asc"))
+    assertEquals(
+      unresolvedCall(BuiltInFunctionDefinitions.ORDER_ASC, unresolvedRef("f0")),
+      ExpressionParser.parseExpression("f0.asc()"))
   }
 
   @Test
   def testKeywordAsPrefixInFunctionName(): Unit = {
-    Assert.assertEquals(
-      ExpressionParser.parseExpression("f0.ascii()").asInstanceOf[Call].functionName,
-      "ASCII")
+    assertEquals(
+      lookupCall("ascii", unresolvedRef("f0")),
+      ExpressionParser.parseExpression("f0.ascii()"))
   }
 
   @Test
   def testKeywordAsInfixInFunctionName(): Unit = {
-    Assert.assertEquals(
-      ExpressionParser.parseExpression("f0.iiascii()").asInstanceOf[Call].functionName,
-      "IIASCII")
+    assertEquals(
+      lookupCall("iiascii", unresolvedRef("f0")),
+      ExpressionParser.parseExpression("f0.iiascii()"))
   }
 
   @Test
   def testKeywordAsSuffixInFunctionName(): Unit = {
-    Assert.assertEquals(
-      ExpressionParser.parseExpression("f0.iiasc()").asInstanceOf[Call].functionName,
-      "IIASC")
+    assertEquals(
+      lookupCall("iiasc", unresolvedRef("f0")),
+      ExpressionParser.parseExpression("f0.iiasc()"))
   }
-
-  override def testData: Any = new Row(0)
-
-  override def typeInfo: TypeInformation[Any] =
-    new RowTypeInfo().asInstanceOf[TypeInformation[Any]]
 }

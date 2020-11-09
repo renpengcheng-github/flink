@@ -21,22 +21,31 @@ package org.apache.flink.table.expressions;
 import org.apache.flink.annotation.PublicEvolving;
 
 /**
- * The visitor definition of {@link CommonExpression}. An expression visitor transforms an
- * expression to instances of {@code R}.
+ * The visitor definition of {@link Expression}.
+ *
+ * <p>An expression visitor transforms an expression to instances of {@code R}.
+ *
+ * <p>Please note that only {@link ResolvedExpression}s are listed here. Pure API expression are handled
+ * in {@link #visit(Expression)}.
  */
 @PublicEvolving
 public interface ExpressionVisitor<R> {
 
-	R visitCall(CallExpression call);
+	// --------------------------------------------------------------------------------------------
+	// resolved expressions
+	// --------------------------------------------------------------------------------------------
 
-	R visitSymbol(CommonSymbolExpression symbolExpression);
+	R visit(CallExpression call);
 
-	R visitValueLiteral(ValueLiteralExpression valueLiteralExpression);
+	R visit(ValueLiteralExpression valueLiteral);
 
-	R visitFieldReference(FieldReferenceExpression fieldReference);
+	R visit(FieldReferenceExpression fieldReference);
 
-	R visitTypeLiteral(TypeLiteralExpression typeLiteral);
+	R visit(TypeLiteralExpression typeLiteral);
 
-	R visit(CommonExpression other);
+	// --------------------------------------------------------------------------------------------
+	// other expressions
+	// --------------------------------------------------------------------------------------------
 
+	R visit(Expression other);
 }

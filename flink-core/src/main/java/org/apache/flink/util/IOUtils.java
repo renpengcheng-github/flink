@@ -25,6 +25,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import static java.util.Arrays.asList;
 
 /**
  * An utility class for I/O related functionality.
@@ -214,6 +218,13 @@ public final class IOUtils {
 	}
 
 	/**
+	 * @see #closeAll(Iterable)
+	 */
+	public static void closeAll(AutoCloseable... closeables) throws Exception {
+		closeAll(asList(closeables));
+	}
+
+	/**
 	 * Closes all {@link AutoCloseable} objects in the parameter, suppressing exceptions. Exception will be emitted
 	 * after calling close() on every object.
 	 *
@@ -231,7 +242,7 @@ public final class IOUtils {
 						closeable.close();
 					}
 				} catch (Exception e) {
-					collectedExceptions = ExceptionUtils.firstOrSuppressed(collectedExceptions, e);
+					collectedExceptions = ExceptionUtils.firstOrSuppressed(e, collectedExceptions);
 				}
 			}
 
@@ -239,6 +250,13 @@ public final class IOUtils {
 				throw collectedExceptions;
 			}
 		}
+	}
+
+	/**
+	 * Closes all elements in the iterable with closeQuietly().
+	 */
+	public static void closeAllQuietly(AutoCloseable... closeables) {
+		closeAllQuietly(asList(closeables));
 	}
 
 	/**
@@ -262,6 +280,17 @@ public final class IOUtils {
 			if (closeable != null) {
 				closeable.close();
 			}
+		} catch (Throwable ignored) {}
+	}
+
+	/**
+	 * Deletes the given file.
+	 *
+	 * <p><b>Important:</b> This method is expected to never throw an exception.
+	 */
+	public static void deleteFileQuietly(Path path) {
+		try {
+			Files.deleteIfExists(path);
 		} catch (Throwable ignored) {}
 	}
 

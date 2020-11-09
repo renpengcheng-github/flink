@@ -29,18 +29,18 @@ import org.apache.flink.table.validate.{ValidationFailure, ValidationResult, Val
   * Flattening of composite types. All flattenings are resolved into
   * `GetCompositeField` expressions.
   */
-case class Flattening(child: Expression) extends UnaryExpression {
+case class Flattening(child: PlannerExpression) extends UnaryExpression {
 
   override def toString = s"$child.flatten()"
 
   override private[flink] def resultType: TypeInformation[_] =
-    throw UnresolvedException(s"Invalid call to on ${this.getClass}.")
+    throw new UnresolvedException(s"Invalcall to on ${this.getClass}.")
 
   override private[flink] def validateInput(): ValidationResult =
     ValidationFailure(s"Unresolved flattening of $child")
 }
 
-case class GetCompositeField(child: Expression, key: Any) extends UnaryExpression {
+case class GetCompositeField(child: PlannerExpression, key: Any) extends UnaryExpression {
 
   private var fieldIndex: Option[Int] = None
 
@@ -85,7 +85,7 @@ case class GetCompositeField(child: Expression, key: Any) extends UnaryExpressio
   }
 
   override private[flink] def makeCopy(anyRefs: Array[AnyRef]): this.type = {
-    val child: Expression = anyRefs.head.asInstanceOf[Expression]
+    val child: PlannerExpression = anyRefs.head.asInstanceOf[PlannerExpression]
     copy(child, key).asInstanceOf[this.type]
   }
 
@@ -100,7 +100,9 @@ case class GetCompositeField(child: Expression, key: Any) extends UnaryExpressio
       } else {
         None
       }
-    case c: ResolvedFieldReference => Some(s"${c.name}$$$key")
+    case c: PlannerResolvedFieldReference =>
+      val keySuffix = if (key.isInstanceOf[Int]) s"_$key" else key
+      Some(s"${c.name}$$$keySuffix")
     case _ => None
   }
 }

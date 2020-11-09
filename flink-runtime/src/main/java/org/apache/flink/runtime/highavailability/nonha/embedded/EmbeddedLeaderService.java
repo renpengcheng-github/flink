@@ -102,6 +102,13 @@ public class EmbeddedLeaderService {
 		}
 	}
 
+	@VisibleForTesting
+	public boolean isShutdown() {
+		synchronized (lock) {
+			return shutdown;
+		}
+	}
+
 	private void fatalError(Throwable error) {
 		LOG.error("Embedded leader election service encountered a fatal error. Shutting down service.", error);
 
@@ -171,7 +178,11 @@ public class EmbeddedLeaderService {
 				service.contender = contender;
 				service.running = true;
 
-				updateLeader();
+				updateLeader().whenComplete((aVoid, throwable) -> {
+					if (throwable != null) {
+						fatalError(throwable);
+					}
+				});
 			}
 			catch (Throwable t) {
 				fatalError(t);
@@ -210,7 +221,11 @@ public class EmbeddedLeaderService {
 					currentLeaderSessionId = null;
 				}
 
-				updateLeader();
+				updateLeader().whenComplete((aVoid, throwable) -> {
+					if (throwable != null) {
+						fatalError(throwable);
+					}
+				});
 			}
 			catch (Throwable t) {
 				fatalError(t);
@@ -221,7 +236,10 @@ public class EmbeddedLeaderService {
 	/**
 	 * Callback from leader contenders when they confirm a leader grant.
 	 */
-	private void confirmLeader(final EmbeddedLeaderElectionService service, final UUID leaderSessionId) {
+	private void confirmLeader(
+			final EmbeddedLeaderElectionService service,
+			final UUID leaderSessionId,
+			final String leaderAddress) {
 		synchronized (lock) {
 			// if the service was shut down in the meantime, ignore this confirmation
 			if (!service.running || shutdown) {
@@ -231,16 +249,15 @@ public class EmbeddedLeaderService {
 			try {
 				// check if the confirmation is for the same grant, or whether it is a stale grant
 				if (service == currentLeaderProposed && currentLeaderSessionId.equals(leaderSessionId)) {
-					final String address = service.contender.getAddress();
-					LOG.info("Received confirmation of leadership for leader {} , session={}", address, leaderSessionId);
+					LOG.info("Received confirmation of leadership for leader {} , session={}", leaderAddress, leaderSessionId);
 
 					// mark leadership
 					currentLeaderConfirmed = service;
-					currentLeaderAddress = address;
+					currentLeaderAddress = leaderAddress;
 					currentLeaderProposed = null;
 
 					// notify all listeners
-					notifyAllListeners(address, leaderSessionId);
+					notifyAllListeners(leaderAddress, leaderSessionId);
 				}
 				else {
 					LOG.debug("Received confirmation of leadership for a stale leadership grant. Ignoring.");
@@ -280,11 +297,11 @@ public class EmbeddedLeaderService {
 
 				currentLeaderSessionId = leaderSessionId;
 				currentLeaderProposed = leaderService;
+				currentLeaderProposed.isLeader = true;
 
-				LOG.info("Proposing leadership to contender {} @ {}",
-						leaderService.contender, leaderService.contender.getAddress());
+				LOG.info("Proposing leadership to contender {}", leaderService.contender.getDescription());
 
-				return execute(new GrantLeadershipCall(leaderService, leaderSessionId, LOG));
+				return execute(new GrantLeadershipCall(leaderService.contender, leaderSessionId, LOG));
 			}
 		} else {
 			return CompletableFuture.completedFuture(null);
@@ -373,7 +390,8 @@ public class EmbeddedLeaderService {
 				}
 
 				LOG.info("Revoking leadership of {}.", leaderService.contender);
-				CompletableFuture<Void> revokeLeadershipCallFuture = execute(new RevokeLeadershipCall(leaderService));
+				leaderService.isLeader = false;
+				CompletableFuture<Void> revokeLeadershipCallFuture = execute(new RevokeLeadershipCall(leaderService.contender));
 
 				CompletableFuture<Void> notifyAllListenersFuture = notifyAllListeners(null, null);
 
@@ -417,9 +435,10 @@ public class EmbeddedLeaderService {
 		}
 
 		@Override
-		public void confirmLeaderSessionID(UUID leaderSessionID) {
+		public void confirmLeadership(UUID leaderSessionID, String leaderAddress) {
 			checkNotNull(leaderSessionID);
-			confirmLeader(this, leaderSessionID);
+			checkNotNull(leaderAddress);
+			confirmLeader(this, leaderSessionID, leaderAddress);
 		}
 
 		@Override
@@ -506,33 +525,28 @@ public class EmbeddedLeaderService {
 
 	private static class GrantLeadershipCall implements Runnable {
 
-		private final EmbeddedLeaderElectionService leaderElectionService;
+		private final LeaderContender contender;
 		private final UUID leaderSessionId;
 		private final Logger logger;
 
 		GrantLeadershipCall(
-				EmbeddedLeaderElectionService leaderElectionService,
+				LeaderContender contender,
 				UUID leaderSessionId,
 				Logger logger) {
 
-			this.leaderElectionService = checkNotNull(leaderElectionService);
+			this.contender = checkNotNull(contender);
 			this.leaderSessionId = checkNotNull(leaderSessionId);
 			this.logger = checkNotNull(logger);
 		}
 
 		@Override
 		public void run() {
-			leaderElectionService.isLeader = true;
-
-			final LeaderContender contender = leaderElectionService.contender;
-
 			try {
 				contender.grantLeadership(leaderSessionId);
 			}
 			catch (Throwable t) {
 				logger.warn("Error granting leadership to contender", t);
 				contender.handleError(t instanceof Exception ? (Exception) t : new Exception(t));
-				leaderElectionService.isLeader = false;
 			}
 		}
 	}
@@ -540,17 +554,15 @@ public class EmbeddedLeaderService {
 	private static class RevokeLeadershipCall implements Runnable {
 
 		@Nonnull
-		private final EmbeddedLeaderElectionService leaderElectionService;
+		private final LeaderContender contender;
 
-		RevokeLeadershipCall(@Nonnull EmbeddedLeaderElectionService leaderElectionService) {
-			this.leaderElectionService = leaderElectionService;
+		RevokeLeadershipCall(@Nonnull LeaderContender contender) {
+			this.contender = contender;
 		}
 
 		@Override
 		public void run() {
-			leaderElectionService.isLeader = false;
-
-			leaderElectionService.contender.revokeLeadership();
+			contender.revokeLeadership();
 		}
 	}
 }
