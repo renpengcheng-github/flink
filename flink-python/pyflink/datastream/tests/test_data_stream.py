@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
+import datetime
 import decimal
 import os
 import uuid
@@ -23,7 +24,7 @@ from pyflink.common.typeinfo import Types
 from pyflink.common.watermark_strategy import WatermarkStrategy, TimestampAssigner
 from pyflink.datastream import StreamExecutionEnvironment, TimeCharacteristic
 from pyflink.datastream.data_stream import DataStream
-from pyflink.datastream.functions import FilterFunction, ProcessFunction
+from pyflink.datastream.functions import FilterFunction, ProcessFunction, KeyedProcessFunction
 from pyflink.datastream.functions import KeySelector
 from pyflink.datastream.functions import MapFunction, FlatMapFunction
 from pyflink.datastream.functions import CoMapFunction, CoFlatMapFunction
@@ -79,7 +80,7 @@ class DataStreamTests(PyFlinkTestCase):
           .add_sink(self.test_sink)
         self.env.execute('reduce_function_test')
         result = self.test_sink.get_results()
-        expected = ["1,a", "3,a", "6,a", "4,b"]
+        expected = ["+I[1, a]", "+I[3, a]", "+I[6, a]", "+I[4, b]"]
         expected.sort()
         result.sort()
         self.assertEqual(expected, result)
@@ -112,7 +113,7 @@ class DataStreamTests(PyFlinkTestCase):
             .add_sink(self.test_sink)
         self.env.execute('map_function_test')
         results = self.test_sink.get_results(False)
-        expected = ['ab,2,1', 'bdc,3,2', 'cfgs,4,3', 'deeefg,6,4']
+        expected = ['+I[ab, 2, 1]', '+I[bdc, 3, 2]', '+I[cfgs, 4, 3]', '+I[deeefg, 6, 4]']
         expected.sort()
         results.sort()
         self.assertEqual(expected, results)
@@ -207,9 +208,10 @@ class DataStreamTests(PyFlinkTestCase):
 
         self.env.execute('key_by_test')
         results = self.test_sink.get_results(True)
-        expected = ["<Row('e', 2)>", "<Row('a', 0)>", "<Row('b', 0)>", "<Row('c', 1)>",
-                    "<Row('d', 1)>", "<Row('e', 2)>", "<Row('a', 0)>", "<Row('b', 0)>",
-                    "<Row('c', 1)>", "<Row('d', 1)>"]
+        expected = ["Row(f0='e', f1=2)", "Row(f0='a', f1=0)", "Row(f0='b', f1=0)",
+                    "Row(f0='c', f1=1)", "Row(f0='d', f1=1)", "Row(f0='e', f1=2)",
+                    "Row(f0='a', f1=0)", "Row(f0='b', f1=0)", "Row(f0='c', f1=1)",
+                    "Row(f0='d', f1=1)"]
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
@@ -222,7 +224,7 @@ class DataStreamTests(PyFlinkTestCase):
             .add_sink(self.test_sink)
         self.env.execute('map_function_test')
         results = self.test_sink.get_results(False)
-        expected = ['ab,2,1', 'bdc,3,2', 'cfgs,4,3', 'deeefg,6,4']
+        expected = ['+I[ab, 2, 1]', '+I[bdc, 3, 2]', '+I[cfgs, 4, 3]', '+I[deeefg, 6, 4]']
         expected.sort()
         results.sort()
         self.assertEqual(expected, results)
@@ -235,7 +237,7 @@ class DataStreamTests(PyFlinkTestCase):
 
         self.env.execute('flat_map_test')
         results = self.test_sink.get_results(False)
-        expected = ['a,0', 'bdc,2', 'deeefg,4']
+        expected = ['+I[a, 0]', '+I[bdc, 2]', '+I[deeefg, 4]']
         results.sort()
         expected.sort()
 
@@ -253,7 +255,7 @@ class DataStreamTests(PyFlinkTestCase):
             .add_sink(self.test_sink)
         self.env.execute('flat_map_test')
         results = self.test_sink.get_results(False)
-        expected = ['a,0', 'bdc,2', 'deeefg,4']
+        expected = ['+I[a, 0]', '+I[bdc, 2]', '+I[deeefg, 4]']
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
@@ -305,7 +307,7 @@ class DataStreamTests(PyFlinkTestCase):
         ds.filter(lambda x: x[0] % 2 == 0).add_sink(self.test_sink)
         self.env.execute("test filter")
         results = self.test_sink.get_results(False)
-        expected = ['2,Hello,Hi']
+        expected = ['+I[2, Hello, Hi]']
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
@@ -316,10 +318,56 @@ class DataStreamTests(PyFlinkTestCase):
         ds.add_sink(self.test_sink)
         self.env.execute("test_add_sink")
         results = self.test_sink.get_results(False)
-        expected = ['deeefg,4', 'bdc,2', 'ab,1', 'cfgs,3']
+        expected = ['+I[deeefg, 4]', '+I[bdc, 2]', '+I[ab, 1]', '+I[cfgs, 3]']
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
+
+    def test_execute_and_collect(self):
+        test_data = ['pyflink', 'datastream', 'execute', 'collect']
+        ds = self.env.from_collection(test_data)
+
+        expected = test_data[:3]
+        actual = []
+        for result in ds.execute_and_collect(limit=3):
+            actual.append(result)
+        self.assertEqual(expected, actual)
+
+        expected = test_data
+        ds = self.env.from_collection(collection=test_data, type_info=Types.STRING())
+        with ds.execute_and_collect() as results:
+            actual = []
+            for result in results:
+                actual.append(result)
+            self.assertEqual(expected, actual)
+
+        test_data = [(1, None, 1, True, 32767, -2147483648, 1.23, 1.98932,
+                      bytearray(b'flink'), 'pyflink',
+                      datetime.date(2014, 9, 13),
+                      datetime.time(hour=12, minute=0, second=0, microsecond=123000),
+                      datetime.datetime(2018, 3, 11, 3, 0, 0, 123000),
+                      [1, 2, 3],
+                      [['pyflink', 'datastream'], ['execute', 'collect']],
+                      decimal.Decimal('1000000000000000000.05'),
+                      decimal.Decimal('1000000000000000000.0599999999999'
+                                      '9999899999999999')),
+                     (2, None, 2, True, 23878, 652516352, 9.87, 2.98936,
+                      bytearray(b'flink'), 'pyflink',
+                      datetime.date(2015, 10, 14),
+                      datetime.time(hour=11, minute=2, second=2, microsecond=234500),
+                      datetime.datetime(2020, 4, 15, 8, 2, 6, 235000),
+                      [2, 4, 6],
+                      [['pyflink', 'datastream'], ['execute', 'collect']],
+                      decimal.Decimal('2000000000000000000.74'),
+                      decimal.Decimal('2000000000000000000.061111111111111'
+                                      '11111111111111'))]
+        expected = test_data
+        ds = self.env.from_collection(test_data)
+        with ds.execute_and_collect() as results:
+            actual = []
+            for result in results:
+                actual.append(result)
+            self.assertEqual(expected, actual)
 
     def test_key_by_map(self):
         ds = self.env.from_collection([('a', 0), ('b', 0), ('c', 1), ('d', 1), ('e', 2)],
@@ -344,8 +392,8 @@ class DataStreamTests(PyFlinkTestCase):
         keyed_stream.map(AssertKeyMapFunction()).add_sink(self.test_sink)
         self.env.execute('key_by_test')
         results = self.test_sink.get_results(True)
-        expected = ["<Row('e', 2)>", "<Row('a', 0)>", "<Row('b', 0)>", "<Row('c', 1)>",
-                    "<Row('d', 1)>"]
+        expected = ["Row(f0='e', f1=2)", "Row(f0='a', f1=0)", "Row(f0='b', f1=0)",
+                    "Row(f0='c', f1=1)", "Row(f0='d', f1=1)"]
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
@@ -358,7 +406,7 @@ class DataStreamTests(PyFlinkTestCase):
 
         self.env.execute("test multi key by")
         results = self.test_sink.get_results(False)
-        expected = ['d,1', 'c,1', 'a,0', 'b,0', 'e,2']
+        expected = ['+I[d, 1]', '+I[c, 1]', '+I[a, 0]', '+I[b, 0]', '+I[e, 2]']
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
@@ -576,7 +624,7 @@ class DataStreamTests(PyFlinkTestCase):
             .add_sink(self.test_sink)
         self.env.execute("test primitive array type info")
         results = self.test_sink.get_results()
-        expected = ['1,[1.1, 1.2, 1.3]', '2,[2.1, 2.2, 2.3]', '3,[3.1, 3.2, 3.3]']
+        expected = ['+I[1, [1.1, 1.2, 1.3]]', '+I[2, [2.1, 2.2, 2.3]]', '+I[3, [3.1, 3.2, 3.3]]']
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
@@ -595,15 +643,63 @@ class DataStreamTests(PyFlinkTestCase):
             .add_sink(self.test_sink)
         self.env.execute("test basic array type info")
         results = self.test_sink.get_results()
-        expected = ['1,[1.1, null, 1.3],[null, hi, flink]',
-                    '2,[null, 2.2, 2.3],[hello, null, flink]',
-                    '3,[3.1, 3.2, null],[hello, hi, null]']
+        expected = ['+I[1, [1.1, null, 1.3], [null, hi, flink]]',
+                    '+I[2, [null, 2.2, 2.3], [hello, null, flink]]',
+                    '+I[3, [3.1, 3.2, null], [hello, hi, null]]']
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
 
     def test_timestamp_assigner_and_watermark_strategy(self):
         self.env.set_parallelism(1)
+        self.env.get_config().set_auto_watermark_interval(2000)
+        self.env.set_stream_time_characteristic(TimeCharacteristic.EventTime)
+        data_stream = self.env.from_collection([(1, '1603708211000'),
+                                                (2, '1603708224000'),
+                                                (3, '1603708226000'),
+                                                (4, '1603708289000')],
+                                               type_info=Types.ROW([Types.INT(), Types.STRING()]))
+
+        class MyTimestampAssigner(TimestampAssigner):
+
+            def extract_timestamp(self, value, record_timestamp) -> int:
+                return int(value[1])
+
+        class MyProcessFunction(KeyedProcessFunction):
+
+            def process_element(self, value, ctx):
+                current_timestamp = ctx.timestamp()
+                current_watermark = ctx.timer_service().current_watermark()
+                current_key = ctx.get_current_key()
+                yield "current key: {}, current timestamp: {}, current watermark: {}, " \
+                      "current_value: {}".format(str(current_key), str(current_timestamp),
+                                                 str(current_watermark), str(value))
+
+            def on_timer(self, timestamp, ctx):
+                pass
+
+        watermark_strategy = WatermarkStrategy.for_monotonous_timestamps()\
+            .with_timestamp_assigner(MyTimestampAssigner())
+        data_stream.assign_timestamps_and_watermarks(watermark_strategy)\
+            .key_by(lambda x: x[0], key_type_info=Types.INT()) \
+            .process(MyProcessFunction(), output_type=Types.STRING()).add_sink(self.test_sink)
+        self.env.execute('test time stamp assigner with keyed process function')
+        result = self.test_sink.get_results()
+        expected_result = ["current key: 1, current timestamp: 1603708211000, current watermark: "
+                           "9223372036854775807, current_value: Row(f0=1, f1='1603708211000')",
+                           "current key: 2, current timestamp: 1603708224000, current watermark: "
+                           "9223372036854775807, current_value: Row(f0=2, f1='1603708224000')",
+                           "current key: 3, current timestamp: 1603708226000, current watermark: "
+                           "9223372036854775807, current_value: Row(f0=3, f1='1603708226000')",
+                           "current key: 4, current timestamp: 1603708289000, current watermark: "
+                           "9223372036854775807, current_value: Row(f0=4, f1='1603708289000')"]
+        result.sort()
+        expected_result.sort()
+        self.assertEqual(expected_result, result)
+
+    def test_process_function(self):
+        self.env.set_parallelism(1)
+        self.env.get_config().set_auto_watermark_interval(2000)
         self.env.set_stream_time_characteristic(TimeCharacteristic.EventTime)
         data_stream = self.env.from_collection([(1, '1603708211000'),
                                                 (2, '1603708224000'),
@@ -618,11 +714,11 @@ class DataStreamTests(PyFlinkTestCase):
 
         class MyProcessFunction(ProcessFunction):
 
-            def process_element(self, value, ctx, out):
+            def process_element(self, value, ctx):
                 current_timestamp = ctx.timestamp()
                 current_watermark = ctx.timer_service().current_watermark()
-                out.collect("current timestamp: {}, current watermark: {}, current_value: {}"
-                            .format(str(current_timestamp), str(current_watermark), str(value)))
+                yield "current timestamp: {}, current watermark: {}, current_value: {}"\
+                    .format(str(current_timestamp), str(current_watermark), str(value))
 
             def on_timer(self, timestamp, ctx, out):
                 pass
@@ -630,18 +726,17 @@ class DataStreamTests(PyFlinkTestCase):
         watermark_strategy = WatermarkStrategy.for_monotonous_timestamps()\
             .with_timestamp_assigner(MyTimestampAssigner())
         data_stream.assign_timestamps_and_watermarks(watermark_strategy)\
-            .key_by(lambda x: x[0], key_type_info=Types.INT()) \
             .process(MyProcessFunction(), output_type=Types.STRING()).add_sink(self.test_sink)
-        self.env.execute('test time stamp assigner')
+        self.env.execute('test process function')
         result = self.test_sink.get_results()
-        expected_result = ["current timestamp: None, current watermark: 9223372036854775807, "
-                           "current_value: <Row(1, '1603708211000')>",
-                           "current timestamp: None, current watermark: 9223372036854775807, "
-                           "current_value: <Row(2, '1603708224000')>",
-                           "current timestamp: None, current watermark: 9223372036854775807, "
-                           "current_value: <Row(3, '1603708226000')>",
-                           "current timestamp: None, current watermark: 9223372036854775807, "
-                           "current_value: <Row(4, '1603708289000')>"]
+        expected_result = ["current timestamp: 1603708211000, current watermark: "
+                           "9223372036854775807, current_value: Row(f0=1, f1='1603708211000')",
+                           "current timestamp: 1603708224000, current watermark: "
+                           "9223372036854775807, current_value: Row(f0=2, f1='1603708224000')",
+                           "current timestamp: 1603708226000, current watermark: "
+                           "9223372036854775807, current_value: Row(f0=3, f1='1603708226000')",
+                           "current timestamp: 1603708289000, current watermark: "
+                           "9223372036854775807, current_value: Row(f0=4, f1='1603708289000')"]
         result.sort()
         expected_result.sort()
         self.assertEqual(expected_result, result)

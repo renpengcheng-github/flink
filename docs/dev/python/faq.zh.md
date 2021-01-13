@@ -29,7 +29,7 @@ under the License.
 
 ## 准备Python虚拟环境
 
-您可以下载[便捷脚本]({{ site.baseurl }}/downloads/setup-pyflink-virtual-env.sh)，以准备可在Mac OS和大多数Linux发行版上使用的Python虚拟环境包(virtual env zip)。
+您可以下载[便捷脚本]({% link downloads/setup-pyflink-virtual-env.sh %})，以准备可在Mac OS和大多数Linux发行版上使用的Python虚拟环境包(virtual env zip)。
 您可以指定PyFlink的版本，来生成对应的PyFlink版本所需的Python虚拟环境，否则将安装最新版本的PyFlink所对应的Python虚拟环境。
 
 {% highlight bash %}
@@ -65,7 +65,7 @@ $ table_env.get_config().set_python_executable("venv.zip/venv/bin/python")
 ## 添加Jar文件
 
 PyFlink作业可能依赖jar文件，比如connector，Java UDF等。
-您可以在提交作业时使用以下Python Table API或通过[命令行参数]({% link ops/cli.zh.md %}#usage)来指定依赖项。
+您可以在提交作业时使用以下Python Table API或通过[命令行参数]({% link deployment/cli.zh.md %}#usage)来指定依赖项。
 
 {% highlight python %}
 # 注意：仅支持本地文件URL（以"file:"开头）。

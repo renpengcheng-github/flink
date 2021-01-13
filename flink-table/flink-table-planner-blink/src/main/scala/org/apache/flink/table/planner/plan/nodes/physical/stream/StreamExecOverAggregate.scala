@@ -35,10 +35,10 @@ import org.apache.flink.table.runtime.typeutils.InternalTypeInfo
 
 import org.apache.calcite.plan.{RelOptCluster, RelTraitSet}
 import org.apache.calcite.rel.RelFieldCollation.Direction.ASCENDING
+import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.`type`.RelDataType
 import org.apache.calcite.rel.core.Window.Group
 import org.apache.calcite.rel.core.{AggregateCall, Window}
-import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rex.RexLiteral
 import org.apache.calcite.tools.RelBuilder
 
@@ -243,9 +243,9 @@ class StreamExecOverAggregate(
 
     val needRetraction = false
     val aggInfoList = transformToStreamAggregateInfoList(
-      aggregateCalls,
       // use aggInputType which considers constants as input instead of inputSchema.relDataType
-      aggInputType,
+      FlinkTypeFactory.toLogicalRowType(aggInputType),
+      aggregateCalls,
       Array.fill(aggregateCalls.size)(needRetraction),
       needInputCount = needRetraction,
       isStateBackendDataViews = true)
@@ -322,9 +322,9 @@ class StreamExecOverAggregate(
 
     val needRetraction = true
     val aggInfoList = transformToStreamAggregateInfoList(
-      aggregateCalls,
       // use aggInputType which considers constants as input instead of inputSchema.relDataType
-      aggInputType,
+      FlinkTypeFactory.toLogicalRowType(aggInputType),
+      aggregateCalls,
       Array.fill(aggregateCalls.size)(needRetraction),
       needInputCount = needRetraction,
       isStateBackendDataViews = true)

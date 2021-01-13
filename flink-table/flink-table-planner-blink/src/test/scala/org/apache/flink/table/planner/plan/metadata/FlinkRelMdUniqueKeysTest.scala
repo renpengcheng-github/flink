@@ -165,6 +165,11 @@ class FlinkRelMdUniqueKeysTest extends FlinkRelMdHandlerTestBase {
   }
 
   @Test
+  def testGetUniqueKeysOnStreamExecDropUpdateBefore(): Unit = {
+    assertEquals(uniqueKeys(Array(0)), mq.getUniqueKeys(streamDropUpdateBefore).toSet)
+  }
+
+  @Test
   def testGetUniqueKeysOnAggregate(): Unit = {
     Array(logicalAgg, flinkLogicalAgg, batchGlobalAggWithLocal, batchGlobalAggWithoutLocal,
       streamGlobalAggWithLocal, streamGlobalAggWithoutLocal).foreach { agg =>
@@ -272,12 +277,6 @@ class FlinkRelMdUniqueKeysTest extends FlinkRelMdHandlerTestBase {
     Array(logicalUnion, logicalIntersect, logicalMinus).foreach { setOp =>
       assertEquals(uniqueKeys(Array(0, 1, 2, 3, 4)), mq.getUniqueKeys(setOp).toSet)
     }
-  }
-
-  @Test
-  def testGetUniqueKeysOnMultipleInput(): Unit = {
-    assertEquals(uniqueKeys(Array(0), Array(2), Array(0, 2)),
-      mq.getUniqueKeys(batchMultipleInput).toSet)
   }
 
   @Test

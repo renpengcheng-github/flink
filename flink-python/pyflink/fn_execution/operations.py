@@ -21,15 +21,25 @@ from functools import reduce
 from itertools import chain
 
 from apache_beam.coders import PickleCoder
-from typing import Tuple, Any
+from typing import Tuple, Any, List
 
 from pyflink.datastream import TimeDomain
-from pyflink.datastream.functions import RuntimeContext, TimerService, Collector, ProcessFunction
+from pyflink.datastream.functions import RuntimeContext, TimerService, ProcessFunction, \
+    KeyedProcessFunction
 from pyflink.fn_execution import flink_fn_execution_pb2, operation_utils
+from pyflink.fn_execution.aggregate import extract_data_view_specs
 from pyflink.fn_execution.beam.beam_coders import DataViewFilterCoder
 from pyflink.fn_execution.operation_utils import extract_user_defined_aggregate_function
-from pyflink.fn_execution.aggregate import RowKeySelector, SimpleAggsHandleFunction, \
-    GroupAggFunction, extract_data_view_specs, DistinctViewDescriptor
+
+try:
+    from pyflink.fn_execution.aggregate_fast import RowKeySelector, SimpleAggsHandleFunction, \
+        GroupAggFunction, DistinctViewDescriptor, SimpleTableAggsHandleFunction, \
+        GroupTableAggFunction
+except ImportError:
+    from pyflink.fn_execution.aggregate_slow import RowKeySelector, SimpleAggsHandleFunction, \
+        GroupAggFunction, DistinctViewDescriptor, SimpleTableAggsHandleFunction,\
+        GroupTableAggFunction
+
 from pyflink.metrics.metricbase import GenericMetricGroup
 from pyflink.table import FunctionContext, Row
 
@@ -38,6 +48,7 @@ from pyflink.table import FunctionContext, Row
 SCALAR_FUNCTION_URN = "flink:transform:scalar_function:v1"
 TABLE_FUNCTION_URN = "flink:transform:table_function:v1"
 STREAM_GROUP_AGGREGATE_URN = "flink:transform:stream_group_aggregate:v1"
+STREAM_GROUP_TABLE_AGGREGATE_URN = "flink:transform:stream_group_table_aggregate:v1"
 PANDAS_AGGREGATE_FUNCTION_URN = "flink:transform:aggregate_function:arrow:v1"
 PANDAS_BATCH_OVER_WINDOW_AGGREGATE_FUNCTION_URN = \
     "flink:transform:batch_over_window_aggregate_function:arrow:v1"
@@ -45,6 +56,7 @@ PANDAS_BATCH_OVER_WINDOW_AGGREGATE_FUNCTION_URN = \
 # datastream operations
 DATA_STREAM_STATELESS_FUNCTION_URN = "flink:transform:datastream_stateless_function:v1"
 PROCESS_FUNCTION_URN = "flink:transform:process_function:v1"
+KEYED_PROCESS_FUNCTION_URN = "flink:transform:keyed_process_function:v1"
 
 
 class Operation(abc.ABC):
@@ -59,11 +71,13 @@ class Operation(abc.ABC):
 
     def open(self):
         for user_defined_func in self.user_defined_funcs:
-            user_defined_func.open(FunctionContext(self.base_metric_group))
+            if hasattr(user_defined_func, 'open'):
+                user_defined_func.open(FunctionContext(self.base_metric_group))
 
     def close(self):
         for user_defined_func in self.user_defined_funcs:
-            user_defined_func.close()
+            if hasattr(user_defined_func, 'close'):
+                user_defined_func.close()
 
     def finish(self):
         self._update_gauge(self.base_metric_group)
@@ -258,7 +272,7 @@ class StatefulFunctionOperation(Operation):
 TRIGGER_TIMER = 1
 
 
-class StreamGroupAggregateOperation(StatefulFunctionOperation):
+class AbstractStreamGroupAggregateOperation(StatefulFunctionOperation):
 
     def __init__(self, spec, keyed_state_backend):
         self.generate_update_before = spec.serialized_fn.generate_update_before
@@ -272,7 +286,7 @@ class StreamGroupAggregateOperation(StatefulFunctionOperation):
         self.state_cache_size = spec.serialized_fn.state_cache_size
         self.state_cleaning_enabled = spec.serialized_fn.state_cleaning_enabled
         self.data_view_specs = extract_data_view_specs(spec.serialized_fn.udfs)
-        super(StreamGroupAggregateOperation, self).__init__(spec, keyed_state_backend)
+        super(AbstractStreamGroupAggregateOperation, self).__init__(spec, keyed_state_backend)
 
     def open(self):
         self.group_agg_function.open(FunctionContext(self.base_metric_group))
@@ -306,6 +320,45 @@ class StreamGroupAggregateOperation(StatefulFunctionOperation):
             # use the agg index of the first function as the key of shared distinct view
             distinct_view_descriptors[agg_index_list[0]] = DistinctViewDescriptor(
                 input_extractors[agg_index_list[0]], filter_arg_list)
+
+        key_selector = RowKeySelector(self.grouping)
+        if len(self.data_view_specs) > 0:
+            state_value_coder = DataViewFilterCoder(self.data_view_specs)
+        else:
+            state_value_coder = PickleCoder()
+
+        self.group_agg_function = self.create_process_function(
+            user_defined_aggs, input_extractors, filter_args, distinct_indexes,
+            distinct_view_descriptors, key_selector, state_value_coder)
+
+        return self.process_element_or_timer, []
+
+    def process_element_or_timer(self, input_datas: List[Tuple[int, Row, int, Row]]):
+        # the structure of the input data:
+        # [element_type, element(for process_element), timestamp(for timer), key(for timer)]
+        # all the fields are nullable except the "element_type"
+        for input_data in input_datas:
+            if input_data[0] != TRIGGER_TIMER:
+                self.group_agg_function.process_element(input_data[1])
+            else:
+                self.group_agg_function.on_timer(input_data[3])
+        return self.group_agg_function.finish_bundle()
+
+    @abc.abstractmethod
+    def create_process_function(self, user_defined_aggs, input_extractors, filter_args,
+                                distinct_indexes, distinct_view_descriptors, key_selector,
+                                state_value_coder):
+        pass
+
+
+class StreamGroupAggregateOperation(AbstractStreamGroupAggregateOperation):
+
+    def __init__(self, spec, keyed_state_backend):
+        super(StreamGroupAggregateOperation, self).__init__(spec, keyed_state_backend)
+
+    def create_process_function(self, user_defined_aggs, input_extractors, filter_args,
+                                distinct_indexes, distinct_view_descriptors, key_selector,
+                                state_value_coder):
         aggs_handler_function = SimpleAggsHandleFunction(
             user_defined_aggs,
             input_extractors,
@@ -315,12 +368,8 @@ class StreamGroupAggregateOperation(StatefulFunctionOperation):
             filter_args,
             distinct_indexes,
             distinct_view_descriptors)
-        key_selector = RowKeySelector(self.grouping)
-        if len(self.data_view_specs) > 0:
-            state_value_coder = DataViewFilterCoder(self.data_view_specs)
-        else:
-            state_value_coder = PickleCoder()
-        self.group_agg_function = GroupAggFunction(
+
+        return GroupAggFunction(
             aggs_handler_function,
             key_selector,
             self.keyed_state_backend,
@@ -328,17 +377,30 @@ class StreamGroupAggregateOperation(StatefulFunctionOperation):
             self.generate_update_before,
             self.state_cleaning_enabled,
             self.index_of_count_star)
-        return self.process_element_or_timer, []
 
-    def process_element_or_timer(self, input_data: Tuple[int, Row, int, Row]):
-        # the structure of the input data:
-        # [element_type, element(for process_element), timestamp(for timer), key(for timer)]
-        # all the fields are nullable except the "element_type"
-        if input_data[0] != TRIGGER_TIMER:
-            return self.group_agg_function.process_element(input_data[1])
-        else:
-            self.group_agg_function.on_timer(input_data[3])
-            return []
+
+class StreamGroupTableAggregateOperation(AbstractStreamGroupAggregateOperation):
+    def __init__(self, spec, keyed_state_backend):
+        super(StreamGroupTableAggregateOperation, self).__init__(spec, keyed_state_backend)
+
+    def create_process_function(self, user_defined_aggs, input_extractors, filter_args,
+                                distinct_indexes, distinct_view_descriptors, key_selector,
+                                state_value_coder):
+        aggs_handler_function = SimpleTableAggsHandleFunction(
+            user_defined_aggs,
+            input_extractors,
+            self.data_view_specs,
+            filter_args,
+            distinct_indexes,
+            distinct_view_descriptors)
+        return GroupTableAggFunction(
+            aggs_handler_function,
+            key_selector,
+            self.keyed_state_backend,
+            state_value_coder,
+            self.generate_update_before,
+            self.state_cleaning_enabled,
+            self.index_of_count_star)
 
 
 class DataStreamStatelessFunctionOperation(Operation):
@@ -366,25 +428,79 @@ class DataStreamStatelessFunctionOperation(Operation):
         return func, [user_defined_func]
 
 
-class ProcessFunctionOperation(StatefulFunctionOperation):
+class ProcessFunctionOperation(DataStreamStatelessFunctionOperation):
 
-    def __init__(self, spec, keyed_state_backend):
-        self._collector = ProcessFunctionOperation.InternalCollector()
-        internal_timer_service = ProcessFunctionOperation.InternalTimerService(
-            self._collector, keyed_state_backend)
+    def __init__(self, spec):
+        self.timer_service = ProcessFunctionOperation.InternalTimerService()
         self.function_context = ProcessFunctionOperation.InternalProcessFunctionContext(
-            internal_timer_service)
-        self.on_timer_ctx = ProcessFunctionOperation.InternalProcessFunctionOnTimerContext(
-            internal_timer_service)
-        super(ProcessFunctionOperation, self).__init__(spec, keyed_state_backend)
+            self.timer_service)
+        super(ProcessFunctionOperation, self).__init__(spec)
 
     def generate_func(self, serialized_fn) -> tuple:
         func, proc_func = operation_utils.extract_process_function(
+            serialized_fn, self.function_context)
+        return func, [proc_func]
+
+    class InternalProcessFunctionContext(ProcessFunction.Context):
+        """
+        Internal implementation of ProcessFunction.Context.
+        """
+
+        def __init__(self, timer_service: TimerService):
+            self._timer_service = timer_service
+            self._timestamp = None
+
+        def timer_service(self):
+            return self._timer_service
+
+        def timestamp(self) -> int:
+            return self._timestamp
+
+        def set_timestamp(self, ts: int):
+            self._timestamp = ts
+
+    class InternalTimerService(TimerService):
+        """
+        Internal implementation of TimerService.
+        """
+        def __init__(self):
+            self._current_watermark = None
+
+        def current_processing_time(self) -> int:
+            return int(time.time() * 1000)
+
+        def current_watermark(self):
+            return self._current_watermark
+
+        def set_current_watermark(self, wm):
+            self._current_watermark = wm
+
+        def register_processing_time_timer(self, t: int):
+            raise Exception("Register timers is only supported on a keyed stream.")
+
+        def register_event_time_timer(self, t: int):
+            raise Exception("Register timers is only supported on a keyed stream.")
+
+
+class KeyedProcessFunctionOperation(StatefulFunctionOperation):
+
+    def __init__(self, spec, keyed_state_backend):
+        self._collector = KeyedProcessFunctionOperation.InternalCollector()
+        internal_timer_service = KeyedProcessFunctionOperation.InternalTimerService(
+            self._collector, keyed_state_backend)
+        self.function_context = KeyedProcessFunctionOperation.InternalKeyedProcessFunctionContext(
+            internal_timer_service)
+        self.on_timer_ctx = KeyedProcessFunctionOperation\
+            .InternalKeyedProcessFunctionOnTimerContext(internal_timer_service)
+        super(KeyedProcessFunctionOperation, self).__init__(spec, keyed_state_backend)
+
+    def generate_func(self, serialized_fn) -> Tuple:
+        func, proc_func = operation_utils.extract_keyed_process_function(
             serialized_fn, self.function_context, self.on_timer_ctx, self._collector,
             self.keyed_state_backend)
         return func, [proc_func]
 
-    class InternalCollector(Collector):
+    class InternalCollector(object):
         """
         Internal implementation of the Collector. It uses a buffer list to store data to be emitted.
         There will be a header flag for each data type. 0 means it is a proc time timer registering
@@ -395,20 +511,88 @@ class ProcessFunctionOperation(StatefulFunctionOperation):
         def __init__(self):
             self.buf = []
 
-        def collect_proc_timer(self, a: Any, key: Any):
-            self.buf.append((0, a, key, None))
+        def collect_reg_proc_timer(self, a: Any, key: Any):
+            self.buf.append(
+                (operation_utils.KeyedProcessFunctionOutputFlag.REGISTER_PROC_TIMER.value,
+                 a, key, None))
 
-        def collect_event_timer(self, a: Any, key: Any):
-            self.buf.append((1, a, key, None))
+        def collect_reg_event_timer(self, a: Any, key: Any):
+            self.buf.append(
+                (operation_utils.KeyedProcessFunctionOutputFlag.REGISTER_EVENT_TIMER.value,
+                 a, key, None))
 
-        def collect_data(self, a: Any):
-            self.buf.append((2, a))
+        def collect_del_proc_timer(self, a: Any, key: Any):
+            self.buf.append(
+                (operation_utils.KeyedProcessFunctionOutputFlag.DEL_PROC_TIMER.value,
+                 a, key, None))
+
+        def collect_del_event_timer(self, a: Any, key: Any):
+            self.buf.append(
+                (operation_utils.KeyedProcessFunctionOutputFlag.DEL_EVENT_TIMER.value,
+                 a, key, None))
 
         def collect(self, a: Any):
-            self.collect_data(a)
+            self.buf.append((operation_utils.KeyedProcessFunctionOutputFlag.NORMAL_DATA.value, a))
 
         def clear(self):
             self.buf.clear()
+
+    class InternalKeyedProcessFunctionOnTimerContext(KeyedProcessFunction.OnTimerContext):
+        """
+        Internal implementation of ProcessFunction.OnTimerContext.
+        """
+
+        def __init__(self, timer_service: TimerService):
+            self._timer_service = timer_service
+            self._time_domain = None
+            self._timestamp = None
+            self._current_key = None
+
+        def get_current_key(self):
+            return self._current_key
+
+        def set_current_key(self, current_key):
+            self._current_key = current_key
+
+        def timer_service(self) -> TimerService:
+            return self._timer_service
+
+        def timestamp(self) -> int:
+            return self._timestamp
+
+        def set_timestamp(self, ts: int):
+            self._timestamp = ts
+
+        def time_domain(self) -> TimeDomain:
+            return self._time_domain
+
+        def set_time_domain(self, td: TimeDomain):
+            self._time_domain = td
+
+    class InternalKeyedProcessFunctionContext(KeyedProcessFunction.Context):
+        """
+        Internal implementation of KeyedProcessFunction.Context.
+        """
+
+        def __init__(self, timer_service: TimerService):
+            self._timer_service = timer_service
+            self._timestamp = None
+            self._current_key = None
+
+        def get_current_key(self):
+            return self._current_key
+
+        def set_current_key(self, current_key):
+            self._current_key = current_key
+
+        def timer_service(self) -> TimerService:
+            return self._timer_service
+
+        def timestamp(self) -> int:
+            return self._timestamp
+
+        def set_timestamp(self, ts: int):
+            self._timestamp = ts
 
     class InternalTimerService(TimerService):
         """
@@ -423,47 +607,24 @@ class ProcessFunctionOperation(StatefulFunctionOperation):
         def current_processing_time(self) -> int:
             return int(time.time() * 1000)
 
-        def register_processing_time_timer(self, t: int):
-            current_key = self._keyed_state_backend.get_current_key()
-            self._collector.collect_proc_timer(t, current_key)
-
-        def register_event_time_timer(self, t: int):
-            current_key = self._keyed_state_backend.get_current_key()
-            self._collector.collect_event_timer(t, current_key)
-
         def current_watermark(self) -> int:
             return self._current_watermark
 
-    class InternalProcessFunctionContext(ProcessFunction.Context):
-        """
-        Internal implementation of ProcessFunction.Context.
-        """
+        def set_current_watermark(self, wm):
+            self._current_watermark = wm
 
-        def __init__(self, timer_service: 'TimerService'):
-            self._timer_service = timer_service
-            self._timestamp = None
+        def register_processing_time_timer(self, t: int):
+            current_key = self._keyed_state_backend.get_current_key()
+            self._collector.collect_reg_proc_timer(t, current_key)
 
-        def timer_service(self):
-            return self._timer_service
+        def register_event_time_timer(self, t: int):
+            current_key = self._keyed_state_backend.get_current_key()
+            self._collector.collect_reg_event_timer(t, current_key)
 
-        def timestamp(self) -> int:
-            return self._timestamp
+        def delete_processing_time_timer(self, t: int):
+            current_key = self._keyed_state_backend.get_current_key()
+            self._collector.collect_del_proc_timer(t, current_key)
 
-    class InternalProcessFunctionOnTimerContext(ProcessFunction.OnTimerContext):
-        """
-        Internal implementation of ProcessFunction.OnTimerContext.
-        """
-
-        def __init__(self, timer_service: 'TimerService'):
-            self._timer_service = timer_service
-            self._time_domain = None
-            self._timestamp = None
-
-        def timer_service(self):
-            return self._timer_service
-
-        def time_domain(self) -> TimeDomain:
-            return self._time_domain
-
-        def timestamp(self) -> int:
-            return self._timestamp
+        def delete_event_time_timer(self, t: int):
+            current_key = self._keyed_state_backend.get_current_key()
+            self._collector.collect_del_event_timer(t, current_key)

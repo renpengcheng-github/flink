@@ -30,7 +30,7 @@ import org.apache.flink.table.api.config.ExecutionConfigOptions
 import org.apache.flink.table.data.RowData
 import org.apache.flink.table.planner.calcite.FlinkTypeFactory
 import org.apache.flink.table.planner.delegation.StreamPlanner
-import org.apache.flink.table.planner.plan.nodes.exec.{ExecNode, StreamExecNode}
+import org.apache.flink.table.planner.plan.nodes.exec.LegacyStreamExecNode
 import org.apache.flink.table.planner.plan.nodes.physical.stream.StreamExecDeduplicate.TABLE_EXEC_INSERT_AND_UPDATE_AFTER_SENSITIVE
 import org.apache.flink.table.planner.plan.utils.{ChangelogPlanUtils, KeySelectorUtil}
 import org.apache.flink.table.runtime.operators.bundle.KeyedMapBundleOperator
@@ -50,8 +50,8 @@ import scala.collection.JavaConversions._
 
 /**
   * Stream physical RelNode which deduplicate on keys and keeps only first row or last row.
-  * This node is an optimization of [[StreamExecRank]] for some special cases.
-  * Compared to [[StreamExecRank]], this node could use mini-batch and access less state.
+  * This node is an optimization of [[StreamPhysicalRank]] for some special cases.
+  * Compared to [[StreamPhysicalRank]], this node could use mini-batch and access less state.
   * <p>NOTES: only supports sort on proctime now, sort on rowtime will not translated into
   * StreamExecDeduplicate node.
   */
@@ -64,7 +64,7 @@ class StreamExecDeduplicate(
     val keepLastRow: Boolean)
   extends SingleRel(cluster, traitSet, inputRel)
   with StreamPhysicalRel
-  with StreamExecNode[RowData] {
+  with LegacyStreamExecNode[RowData] {
 
   def getUniqueKeys: Array[Int] = uniqueKeys
 
@@ -93,16 +93,6 @@ class StreamExecDeduplicate(
   }
 
   //~ ExecNode methods -----------------------------------------------------------
-
-  override def getInputNodes: util.List[ExecNode[StreamPlanner, _]] = {
-    List(getInput.asInstanceOf[ExecNode[StreamPlanner, _]])
-  }
-
-  override def replaceInputNode(
-      ordinalInParent: Int,
-      newInputNode: ExecNode[StreamPlanner, _]): Unit = {
-    replaceInput(ordinalInParent, newInputNode.asInstanceOf[RelNode])
-  }
 
   override protected def translateToPlanInternal(
       planner: StreamPlanner): Transformation[RowData] = {

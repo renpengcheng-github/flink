@@ -16,6 +16,7 @@
 # limitations under the License.
 ################################################################################
 import datetime
+from enum import Enum
 
 from typing import Any, Tuple, Dict, List
 
@@ -25,7 +26,7 @@ from pyflink.fn_execution import flink_fn_execution_pb2, pickle
 from pyflink.serializers import PickleSerializer
 from pyflink.table import functions
 from pyflink.table.udf import DelegationTableFunction, DelegatingScalarFunction, \
-    AggregateFunction, PandasAggregateFunctionWrapper
+    ImperativeAggregateFunction, PandasAggregateFunctionWrapper
 
 _func_num = 0
 _constant_num = 0
@@ -33,7 +34,24 @@ _constant_num = 0
 
 def wrap_pandas_result(it):
     import pandas as pd
-    return [pd.Series([result]) for result in it]
+    arrays = []
+    for result in it:
+        if isinstance(result, (Row, Tuple)):
+            arrays.append(pd.concat([pd.Series([item]) for item in result], axis=1))
+        else:
+            arrays.append(pd.Series([result]))
+    return arrays
+
+
+def wrap_inputs_as_row(*args):
+    from pyflink.common.types import Row
+    import pandas as pd
+    if type(args[0]) == pd.Series:
+        return pd.concat(args, axis=1)
+    elif len(args) == 1 and isinstance(args[0], (pd.DataFrame, Row, Tuple)):
+        return args[0]
+    else:
+        return Row(*args)
 
 
 def extract_over_window_user_defined_function(user_defined_function_proto):
@@ -96,7 +114,12 @@ def extract_user_defined_function(user_defined_function_proto, pandas_udaf=False
     func_args, input_variable_dict, input_funcs = _extract_input(user_defined_function_proto.inputs)
     variable_dict.update(input_variable_dict)
     user_defined_funcs.extend(input_funcs)
-    return "%s(%s)" % (func_name, func_args), variable_dict, user_defined_funcs
+    if user_defined_function_proto.takes_row_as_input:
+        variable_dict['wrap_inputs_as_row'] = wrap_inputs_as_row
+        func_str = "%s(wrap_inputs_as_row(%s))" % (func_name, func_args)
+    else:
+        func_str = "%s(%s)" % (func_name, func_args)
+    return func_str, variable_dict, user_defined_funcs
 
 
 def _parse_constant_value(constant_value) -> Tuple[str, Any]:
@@ -140,7 +163,7 @@ def extract_user_defined_aggregate_function(
         user_defined_function_proto,
         distinct_info_dict: Dict[Tuple[List[str]], Tuple[List[int], List[int]]]):
     user_defined_agg = load_aggregate_function(user_defined_function_proto.payload)
-    assert isinstance(user_defined_agg, AggregateFunction)
+    assert isinstance(user_defined_agg, ImperativeAggregateFunction)
     args_str = []
     local_variable_dict = {}
     for arg in user_defined_function_proto.inputs:
@@ -170,8 +193,13 @@ def extract_user_defined_aggregate_function(
             distinct_index = current_index
     else:
         distinct_index = -1
+    if user_defined_function_proto.takes_row_as_input:
+        local_variable_dict['wrap_inputs_as_row'] = wrap_inputs_as_row
+        func_str = "lambda value : [wrap_inputs_as_row(%s)]" % ",".join(args_str)
+    else:
+        func_str = "lambda value : (%s,)" % ",".join(args_str)
     return user_defined_agg, \
-        eval("lambda value : (%s,)" % ",".join(args_str), local_variable_dict) \
+        eval(func_str, local_variable_dict) \
         if args_str else lambda v: tuple(), \
         user_defined_function_proto.filter_arg, \
         distinct_index
@@ -203,8 +231,7 @@ def extract_data_stream_stateless_function(udf_proto):
     func_type = udf_proto.function_type
     UserDefinedDataStreamFunction = flink_fn_execution_pb2.UserDefinedDataStreamFunction
     func = None
-    # import pyflink.datastream.tests.test_data_stream
-    # from pyflink.datastream.tests.test_data_stream import MyKeySelector
+
     user_defined_func = pickle.loads(udf_proto.payload)
     if func_type == UserDefinedDataStreamFunction.MAP:
         func = user_defined_func.map
@@ -213,79 +240,140 @@ def extract_data_stream_stateless_function(udf_proto):
     elif func_type == UserDefinedDataStreamFunction.REDUCE:
         reduce_func = user_defined_func.reduce
 
-        def wrap_func(value):
+        def wrapped_func(value):
             return reduce_func(value[0], value[1])
-        func = wrap_func
+        func = wrapped_func
     elif func_type == UserDefinedDataStreamFunction.CO_MAP:
         co_map_func = user_defined_func
 
-        def wrap_func(value):
-            return co_map_func.map1(value[1]) if value[0] else co_map_func.map2(value[2])
-        func = wrap_func
+        def wrapped_func(value):
+            # value in format of: [INPUT_FLAG, REAL_VALUE]
+            # INPUT_FLAG value of True for the left stream, while False for the right stream
+            return Row(CoMapFunctionOutputFlag.LEFT.value, co_map_func.map1(value[1])) \
+                if value[0] else Row(CoMapFunctionOutputFlag.RIGHT.value,
+                                     co_map_func.map2(value[2]))
+        func = wrapped_func
     elif func_type == UserDefinedDataStreamFunction.CO_FLAT_MAP:
         co_flat_map_func = user_defined_func
 
-        def wrap_func(value):
-            return co_flat_map_func.flat_map1(value[1]) if value[0] else \
-                co_flat_map_func.flat_map2(value[2])
-        func = wrap_func
+        def wrapped_func(value):
+            if value[0]:
+                result = co_flat_map_func.flat_map1(value[1])
+                if result:
+                    for result_val in result:
+                        yield Row(CoFlatMapFunctionOutputFlag.LEFT.value, result_val)
+                yield Row(CoFlatMapFunctionOutputFlag.LEFT_END.value, None)
+            else:
+                result = co_flat_map_func.flat_map2(value[2])
+                if result:
+                    for result_val in result:
+                        yield Row(CoFlatMapFunctionOutputFlag.RIGHT.value, result_val)
+                yield Row(CoFlatMapFunctionOutputFlag.RIGHT_END.value, None)
+        func = wrapped_func
 
     elif func_type == UserDefinedDataStreamFunction.TIMESTAMP_ASSIGNER:
         extract_timestamp = user_defined_func.extract_timestamp
 
-        def wrap_func(value):
+        def wrapped_func(value):
             pre_timestamp = value[0]
             real_data = value[1]
-            new_timestamp = extract_timestamp(real_data, pre_timestamp)
-            return Row(new_timestamp, real_data)
-        func = wrap_func
+            return extract_timestamp(real_data, pre_timestamp)
+        func = wrapped_func
 
     return func, user_defined_func
 
 
-def extract_process_function(user_defined_function_proto, ctx, on_timer_ctx,
-                             collector, keyed_state_backend):
+def extract_process_function(user_defined_function_proto, ctx):
     process_function = pickle.loads(user_defined_function_proto.payload)
     process_element = process_function.process_element
-    on_timer_func = process_function.on_timer
 
-    def wrapped_func(value):
-        # VALUE[TIMER_FLAG, TIMER_VALUE, CURRENT_WATERMARK, TIMER_KEY, NORMAL_DATA]
-        current_watermark = value[2]
-        ctx.timer_service()._current_watermark = current_watermark
-        on_timer_ctx.timer_service()._current_watermark = current_watermark
-        # it is timer data
+    def wrapped_process_function(value):
+        # VALUE[CURRENT_TIMESTAMP, CURRENT_WATERMARK, NORMAL_DATA]
+        ctx.set_timestamp(value[0])
+        ctx.timer_service().set_current_watermark(value[1])
+        output_result = process_element(value[2], ctx)
+        return output_result
+
+    return wrapped_process_function, process_function
+
+
+def extract_keyed_process_function(user_defined_function_proto, ctx, on_timer_ctx,
+                                   collector, keyed_state_backend):
+    process_function = pickle.loads(user_defined_function_proto.payload)
+    process_element = process_function.process_element
+    on_timer = process_function.on_timer
+
+    def wrapped_keyed_process_function(value):
         if value[0] is not None:
-            on_timer_ctx._timestamp = value[1]
-            timer_key = value[3]
-            keyed_state_backend.set_current_key(timer_key)
-            if value[0] == 0:
-                time_domain = TimeDomain.EVENT_TIME
-            elif value[0] == 1:
-                time_domain = TimeDomain.PROCESSING_TIME
+            # it is timer data
+            # VALUE: TIMER_FLAG, TIMESTAMP_OF_TIMER, CURRENT_WATERMARK, CURRENT_KEY_OF_TIMER, None
+            on_timer_ctx.set_timestamp(value[1])
+            on_timer_ctx.timer_service().set_current_watermark(value[2])
+            current_key = value[3]
+            on_timer_ctx.set_current_key(current_key)
+            keyed_state_backend.set_current_key(current_key)
+            if value[0] == KeyedProcessFunctionInputFlag.EVENT_TIME_TIMER.value:
+                on_timer_ctx.set_time_domain(TimeDomain.EVENT_TIME)
+            elif value[0] == KeyedProcessFunctionInputFlag.PROC_TIME_TIMER.value:
+                on_timer_ctx.set_time_domain(TimeDomain.PROCESSING_TIME)
             else:
                 raise TypeError("TimeCharacteristic[%s] is not supported." % str(value[0]))
-            on_timer_ctx._time_domain = time_domain
-            on_timer_func(value[1], on_timer_ctx, collector)
+            output_result = on_timer(value[1], on_timer_ctx)
         else:
             # it is normal data
-            # VALUE[TIMER_FLAG, CURRENT_TIMESTAMP, CURRENT_WATERMARK, TIMER_KEY, NORMAL_DATA]
-            # NORMAL_DATA[CURRENT_KEY, DATA]
-            ctx._timestamp = value[1]
-            current_key = Row(value[4][0])
-            keyed_state_backend.set_current_key(current_key)
+            # VALUE: TIMER_FLAG, CURRENT_TIMESTAMP, CURRENT_WATERMARK, None, NORMAL_DATA
+            # NORMAL_DATA: CURRENT_KEY, DATA
+            ctx.set_timestamp(value[1])
+            ctx.timer_service().set_current_watermark(value[2])
+            current_key = value[4][0]
+            ctx.set_current_key(current_key)
+            keyed_state_backend.set_current_key(Row(current_key))
 
-            real_data = value[4][1]
-            process_element(real_data, ctx, collector)
+            output_result = process_element(value[4][1], ctx)
 
-        for a in collector.buf:
+        if output_result:
+            for result in output_result:
+                yield Row(None, None, None, result)
+
+        for result in collector.buf:
             # 0: proc time timer data
             # 1: event time timer data
             # 2: normal data
             # result_row: [TIMER_FLAG, TIMER TYPE, TIMER_KEY, RESULT_DATA]
-            if a[0] == 2:
-                yield Row(None, None, None, a[1])
-            else:
-                yield Row(a[0], a[1], a[2], None)
+            yield Row(result[0], result[1], result[2], None)
+
         collector.clear()
-    return wrapped_func, process_function
+
+    return wrapped_keyed_process_function, process_function
+
+
+"""
+All these Enum Classes MUST be in sync with
+org.apache.flink.streaming.api.utils.PythonOperatorUtils if there are any changes.
+"""
+
+
+class KeyedProcessFunctionInputFlag(Enum):
+    EVENT_TIME_TIMER = 0
+    PROC_TIME_TIMER = 1
+    NORMAL_DATA = 2
+
+
+class KeyedProcessFunctionOutputFlag(Enum):
+    REGISTER_EVENT_TIMER = 0
+    REGISTER_PROC_TIMER = 1
+    NORMAL_DATA = 2
+    DEL_EVENT_TIMER = 3
+    DEL_PROC_TIMER = 4
+
+
+class CoFlatMapFunctionOutputFlag(Enum):
+    LEFT = 0
+    RIGHT = 1
+    LEFT_END = 2
+    RIGHT_END = 3
+
+
+class CoMapFunctionOutputFlag(Enum):
+    LEFT = 0
+    RIGHT = 1

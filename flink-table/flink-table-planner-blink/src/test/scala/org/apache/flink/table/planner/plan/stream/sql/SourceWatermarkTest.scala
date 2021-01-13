@@ -21,7 +21,7 @@ package org.apache.flink.table.planner.plan.stream.sql
 import org.apache.flink.table.planner.utils.TableTestBase
 import org.apache.flink.table.planner.runtime.utils.JavaUserDefinedScalarFunctions.JavaFunc5
 
-import org.junit.{Before, Ignore, Test}
+import org.junit.{Before, Test}
 
 /**
  * Tests for watermark push down.
@@ -86,33 +86,8 @@ class SourceWatermarkTest extends TableTestBase {
          | )
          |""".stripMargin
     util.tableEnv.executeSql(ddl3)
-  }
 
-  @Test
-  def testWatermarkOnComputedColumnExcludedRowTime2(): Unit = {
-    util.verifyPlan("SELECT a, b, SECOND(d) FROM VirtualTable")
-  }
-
-  @Test
-  def testWatermarkOnComputedColumnExcluedRowTime1(): Unit = {
-    util.verifyPlan("SELECT a, b FROM VirtualTable WHERE b > 10")
-  }
-
-  @Test
-  def testWatermarkOnNestedRowWithNestedProjection(): Unit = {
-    util.verifyPlan("select c.e, c.d from NestedTable")
-  }
-
-  @Test
-  def testWatermarkWithUdf(): Unit = {
-    util.verifyPlan("SELECT a - b FROM UdfTable")
-  }
-
-  @Ignore
-  @Test
-  def testWatermarkWithMetadata(): Unit = {
-    // TODO(FLINK-20029): define computed column on the metadata
-    val ddl =
+    val ddl4 =
       """
         | CREATE TABLE MyTable(
         |   a INT,
@@ -130,7 +105,36 @@ class SourceWatermarkTest extends TableTestBase {
         | )
         |""".stripMargin
 
-    util.tableEnv.executeSql(ddl)
-    util.verifyPlan("SELECT a, b FROM MyTable")
+    util.tableEnv.executeSql(ddl4)
+  }
+
+  @Test
+  def testSimpleWatermarkPushDown(): Unit = {
+    util.verifyExecPlan("SELECT a, b, c FROM VirtualTable")
+  }
+
+  @Test
+  def testWatermarkOnComputedColumnExcludedRowTime2(): Unit = {
+    util.verifyExecPlan("SELECT a, b, SECOND(d) FROM VirtualTable")
+  }
+
+  @Test
+  def testWatermarkOnComputedColumnExcluedRowTime1(): Unit = {
+    util.verifyExecPlan("SELECT a, b FROM VirtualTable WHERE b > 10")
+  }
+
+  @Test
+  def testWatermarkOnNestedRowWithNestedProjection(): Unit = {
+    util.verifyExecPlan("select c.e, c.d from NestedTable")
+  }
+
+  @Test
+  def testWatermarkWithUdf(): Unit = {
+    util.verifyExecPlan("SELECT a - b FROM UdfTable")
+  }
+
+  @Test
+  def testWatermarkWithMetadata(): Unit = {
+    util.verifyExecPlan("SELECT a, b FROM MyTable")
   }
 }

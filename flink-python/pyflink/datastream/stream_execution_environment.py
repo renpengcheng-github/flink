@@ -26,8 +26,7 @@ from pyflink.common.execution_config import ExecutionConfig
 from pyflink.common.job_client import JobClient
 from pyflink.common.job_execution_result import JobExecutionResult
 from pyflink.common.restart_strategy import RestartStrategies, RestartStrategyConfiguration
-from pyflink.common.typeinfo import PickledBytesTypeInfo, TypeInformation, _from_java_type, \
-    WrapperTypeInfo
+from pyflink.common.typeinfo import TypeInformation, Types
 from pyflink.datastream.checkpoint_config import CheckpointConfig
 from pyflink.datastream.checkpointing_mode import CheckpointingMode
 from pyflink.datastream.data_stream import DataStream
@@ -567,10 +566,10 @@ class StreamExecutionEnvironment(object):
         env_config = jvm.org.apache.flink.python.util.PythonConfigUtil \
             .getEnvironmentConfig(self._j_stream_execution_environment)
         old_jar_paths = env_config.getString(jars_key, None)
-        jars_path = jvm.PythonDependencyUtils.FILE_DELIMITER.join(jars_path)
-        if old_jar_paths is not None:
-            jars_path = jvm.PythonDependencyUtils.FILE_DELIMITER.join([old_jar_paths, jars_path])
-        env_config.setString(jars_key, jars_path)
+        joined_jars_path = ';'.join(jars_path)
+        if old_jar_paths and old_jar_paths.strip():
+            joined_jars_path = ';'.join([old_jar_paths, joined_jars_path])
+        env_config.setString(jars_key, joined_jars_path)
 
     def add_classpaths(self, *classpaths: str):
         """
@@ -585,10 +584,10 @@ class StreamExecutionEnvironment(object):
         env_config = jvm.org.apache.flink.python.util.PythonConfigUtil \
             .getEnvironmentConfig(self._j_stream_execution_environment)
         old_classpaths = env_config.getString(classpaths_key, None)
-        classpaths = jvm.PythonDependencyUtils.FILE_DELIMITER.join(classpaths)
-        if old_classpaths is not None:
-            classpaths = jvm.PythonDependencyUtils.FILE_DELIMITER.join([old_classpaths, classpaths])
-        env_config.setString(classpaths_key, classpaths)
+        joined_classpaths = ';'.join(list(classpaths))
+        if old_classpaths and old_classpaths.strip():
+            joined_classpaths = ';'.join([old_classpaths, joined_classpaths])
+        env_config.setString(classpaths_key, joined_classpaths)
 
     def get_default_local_parallelism(self) -> int:
         """
@@ -678,7 +677,7 @@ class StreamExecutionEnvironment(object):
         :param type_info: type of the returned stream. Optional.
         :return: the data stream constructed.
         """
-        if type_info and isinstance(type_info, WrapperTypeInfo):
+        if type_info:
             j_type_info = type_info.get_java_type_info()
         else:
             j_type_info = None
@@ -717,11 +716,7 @@ class StreamExecutionEnvironment(object):
         :return: the data stream representing the given collection.
         """
         if type_info is not None:
-            if isinstance(type_info, WrapperTypeInfo):
-                wrapper_type = _from_java_type(type_info.get_java_type_info())
-                collection = [wrapper_type.to_internal_type(element)
-                              if isinstance(wrapper_type, WrapperTypeInfo) else None
-                              for element in collection]
+            collection = [type_info.to_internal_type(element) for element in collection]
         return self._from_collection(collection, type_info)
 
     def _from_collection(self, elements: List[Any],
@@ -737,7 +732,7 @@ class StreamExecutionEnvironment(object):
             # list.
             if type_info is None:
                 j_objs = gateway.jvm.PythonBridgeUtils.readPickledBytes(temp_file.name)
-                out_put_type_info = PickledBytesTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO()
+                out_put_type_info = Types.PICKLED_BYTE_ARRAY()  # type: TypeInformation
             else:
                 j_objs = gateway.jvm.PythonBridgeUtils.readPythonObjects(temp_file.name)
                 out_put_type_info = type_info

@@ -246,7 +246,7 @@ aggregate function will be called to compute the aggregated result.
 The following example illustrates the aggregation process:
 
 <center>
-<img alt="UDAGG mechanism" src="{{ site.baseurl }}/fig/udagg-mechanism-python.png" width="80%">
+<img alt="UDAGG mechanism" src="{% link /fig/udagg-mechanism-python.png %}" width="80%">
 </center>
 
 In the above example, we assume a table that contains data about beverages. The table consists of three columns (`id`, `name`,
@@ -393,4 +393,4 @@ Please refer to the [documentation of the corresponding classes]({{ site.pythond
 **NOTE:** For reducing the data transmission cost between Python UDF worker and Java process caused by accessing the data in Flink states(e.g. accumulators and data views), 
 there is a cached layer between the raw state handler and the Python state backend. You can adjust the values of these configuration options to change the behavior of the cache layer for best performance:
 `python.state.cache-size`, `python.map-state.read-cache-size`, `python.map-state.write-cache-size`, `python.map-state.iterate-response-batch-size`.
-For more details please refer to the [Python Configuration Documentation]({% link dev/python/table-api-users-guide/python_config.md %}).
+For more details please refer to the [Python Configuration Documentation]({% link dev/python/python_config.md %}).

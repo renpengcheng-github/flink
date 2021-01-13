@@ -345,7 +345,7 @@ class CachingMapStateHandler(object):
                     cached_map_state.put(map_key, (True, map_value))
                 else:
                     raise Exception("Unknown flag: " + str(request_flag))
-        self._append_raw(
+        return self._append_raw(
             state_key,
             items,
             map_key_coder,
@@ -731,17 +731,8 @@ class RemoteKeyedStateBackend(object):
         self._state_handler = state_handler
         self._map_state_handler = CachingMapStateHandler(
             state_handler, map_state_read_cache_size)
-
-        try:
-            from pyflink.fn_execution import coder_impl_fast
-            is_fast = True if coder_impl_fast else False
-        except:
-            is_fast = False
-        if not is_fast:
-            self._key_coder_impl = key_coder.get_impl()
-        else:
-            from pyflink.fn_execution.coders import FlattenRowCoder
-            self._key_coder_impl = FlattenRowCoder(key_coder._field_coders).get_impl()
+        from pyflink.fn_execution.coders import FlattenRowCoder
+        self._key_coder_impl = FlattenRowCoder(key_coder._field_coders).get_impl()
         self._state_cache_size = state_cache_size
         self._map_state_write_cache_size = map_state_write_cache_size
         self._all_states = {}

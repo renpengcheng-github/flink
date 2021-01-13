@@ -2,7 +2,7 @@
 title: "Raw Format"
 nav-title: Raw
 nav-parent_id: sql-formats
-nav-pos: 7
+nav-pos: 9
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -36,7 +36,10 @@ Note: this format encodes `null` values as `null` of `byte[]` type. This may hav
 Dependencies
 ------------
 
-The Raw format is a built-in format, so you don't need to add additional dependency for projects and SQL Client.
+{% assign connector = site.data.sql-connectors['raw'] %}
+{% include sql-connector-download-table.html
+    connector=connector
+%}
 
 Example
 ----------------

@@ -74,14 +74,24 @@ class FlattenRowCoderImpl(StreamCoderImpl):
         out_stream.write(data_out_stream.get())
         data_out_stream._clear()
 
+    def encode_nested(self, value: List):
+        data_out_stream = self.data_out_stream
+        self._encode_one_row_to_stream(value, data_out_stream, True)
+        result = data_out_stream.get()
+        data_out_stream._clear()
+        return result
+
     def decode_from_stream(self, in_stream, nested):
         while in_stream.size() > 0:
             in_stream.read_var_int64()
             yield self._decode_one_row_from_stream(in_stream, nested)[1]
 
-    def _encode_one_row_to_stream(self, value: Row, out_stream, nested):
+    def _encode_one_row_to_stream(self, value, out_stream, nested):
         field_coders = self._field_coders
-        self._write_mask(value, out_stream, value.get_row_kind().value)
+        if isinstance(value, Row):
+            self._write_mask(value, out_stream, value.get_row_kind().value)
+        else:
+            self._write_mask(value, out_stream)
         for i in range(self._field_count):
             item = value[i]
             if item is not None:
@@ -144,8 +154,9 @@ class FlattenRowCoderImpl(StreamCoderImpl):
 
 class RowCoderImpl(FlattenRowCoderImpl):
 
-    def __init__(self, field_coders):
+    def __init__(self, field_coders, field_names):
         super(RowCoderImpl, self).__init__(field_coders)
+        self.field_names = field_names
 
     def encode_to_stream(self, value: Row, out_stream, nested):
         self._encode_one_row_to_stream(value, out_stream, nested)
@@ -153,6 +164,7 @@ class RowCoderImpl(FlattenRowCoderImpl):
     def decode_from_stream(self, in_stream, nested):
         row_kind_value, fields = self._decode_one_row_from_stream(in_stream, nested)
         row = Row(*fields)
+        row.set_field_names(self.field_names)
         row.set_row_kind(RowKind(row_kind_value))
         return row
 
@@ -208,7 +220,7 @@ class AggregateFunctionRowCoderImpl(StreamCoderImpl):
             data_out_stream._clear()
 
     def decode_from_stream(self, in_stream, nested):
-        return self._flatten_row_coder.decode_from_stream(in_stream, nested)
+        return [[item for item in self._flatten_row_coder.decode_from_stream(in_stream, nested)]]
 
     def __repr__(self):
         return 'AggregateFunctionRowCoderImpl[%s]' % repr(self._flatten_row_coder)
@@ -306,6 +318,25 @@ class DataStreamFlatMapCoderImpl(StreamCoderImpl):
 
     def encode_to_stream(self, iter_value, stream,
                          nested):  # type: (Any, create_OutputStream, bool) -> None
+        if iter_value:
+            for value in iter_value:
+                self._field_coder.encode_to_stream(value, stream, nested)
+        stream.write_var_int64(1)
+        stream.write_byte(0x00)
+
+    def decode_from_stream(self, stream, nested):
+        return self._field_coder.decode_from_stream(stream, nested)
+
+    def __str__(self) -> str:
+        return 'DataStreamFlatMapCoderImpl[%s]' % repr(self._field_coder)
+
+
+class DataStreamCoFlatMapCoderImpl(StreamCoderImpl):
+    def __init__(self, field_coder):
+        self._field_coder = field_coder
+
+    def encode_to_stream(self, iter_value, stream,
+                         nested):  # type: (Any, create_OutputStream, bool) -> None
         for value in iter_value:
             self._field_coder.encode_to_stream(value, stream, nested)
 
@@ -313,7 +344,7 @@ class DataStreamFlatMapCoderImpl(StreamCoderImpl):
         return self._field_coder.decode_from_stream(stream, nested)
 
     def __str__(self) -> str:
-        return 'DataStreamFlatMapCoderImpl[%s]' % repr(self._field_coder)
+        return 'DataStreamCoFlatMapCoderImpl[%s]' % repr(self._field_coder)
 
 
 class MapCoderImpl(StreamCoderImpl):
